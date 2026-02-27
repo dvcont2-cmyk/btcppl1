@@ -10,7 +10,6 @@ from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(layout="wide", page_title="Crypto Signal Dashboard")
 
-# Auto-refresh every 60 seconds
 st_autorefresh(interval=60_000, key="price_refresh")
 
 CG_KEY = st.secrets["COINGECKO_API_KEY"]
@@ -196,29 +195,29 @@ def get_btc_long_daily():
 # ── INDICATORS ─────────────────────────────────────────────────
 
 def compute_indicators(df):
-    df["RSI"]        = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
-    stoch            = ta.momentum.StochRSIIndicator(df["close"], window=14)
-    df["StochRSI_k"] = stoch.stochrsi_k() * 100
-    df["StochRSI_d"] = stoch.stochrsi_d() * 100
-    macd             = ta.trend.MACD(df["close"])
-    df["MACD"]       = macd.macd()
+    df["RSI"]         = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
+    stoch             = ta.momentum.StochRSIIndicator(df["close"], window=14)
+    df["StochRSI_k"]  = stoch.stochrsi_k() * 100
+    df["StochRSI_d"]  = stoch.stochrsi_d() * 100
+    macd              = ta.trend.MACD(df["close"])
+    df["MACD"]        = macd.macd()
     df["MACD_signal"] = macd.macd_signal()
-    df["MACD_hist"]  = macd.macd_diff()
-    bb               = ta.volatility.BollingerBands(df["close"], window=20)
-    df["BB_upper"]   = bb.bollinger_hband()
-    df["BB_lower"]   = bb.bollinger_lband()
-    df["BB_mid"]     = bb.bollinger_mavg()
-    df["BB_pct"]     = bb.bollinger_pband()
-    df["EMA_50"]     = ta.trend.EMAIndicator(df["close"], window=50).ema_indicator()
-    df["EMA_200"]    = ta.trend.EMAIndicator(df["close"], window=200).ema_indicator()
-    adx              = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14)
-    df["ADX"]        = adx.adx()
-    df["ADX_pos"]    = adx.adx_pos()
-    df["ADX_neg"]    = adx.adx_neg()
-    df["CCI"]        = ta.trend.CCIIndicator(df["high"], df["low"], df["close"], window=20).cci()
-    df["WilliamsR"]  = ta.momentum.WilliamsRIndicator(df["high"], df["low"], df["close"], lbp=14).williams_r()
-    df["ROC"]        = ta.momentum.ROCIndicator(df["close"], window=12).roc()
-    df["ATR"]        = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range()
+    df["MACD_hist"]   = macd.macd_diff()
+    bb                = ta.volatility.BollingerBands(df["close"], window=20)
+    df["BB_upper"]    = bb.bollinger_hband()
+    df["BB_lower"]    = bb.bollinger_lband()
+    df["BB_mid"]      = bb.bollinger_mavg()
+    df["BB_pct"]      = bb.bollinger_pband()
+    df["EMA_50"]      = ta.trend.EMAIndicator(df["close"], window=50).ema_indicator()
+    df["EMA_200"]     = ta.trend.EMAIndicator(df["close"], window=200).ema_indicator()
+    adx               = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14)
+    df["ADX"]         = adx.adx()
+    df["ADX_pos"]     = adx.adx_pos()
+    df["ADX_neg"]     = adx.adx_neg()
+    df["CCI"]         = ta.trend.CCIIndicator(df["high"], df["low"], df["close"], window=20).cci()
+    df["WilliamsR"]   = ta.momentum.WilliamsRIndicator(df["high"], df["low"], df["close"], lbp=14).williams_r()
+    df["ROC"]         = ta.momentum.ROCIndicator(df["close"], window=12).roc()
+    df["ATR"]         = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range()
     return df
 
 def compute_squeeze(df):
@@ -422,6 +421,9 @@ def delta_metric(col, label, val):
     else:
         col.metric(label, f"{val:+.2f}%", delta=f"{val:.2f}%")
 
+def val_span(value, color):
+    return f"<span style='font-size:0.85rem; color:{color}'>{value}</span>"
+
 if "alerts" not in st.session_state:
     st.session_state.alerts = []
 
@@ -458,6 +460,25 @@ ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 st.session_state.alerts.insert(0,
     f"{ts} | {coin_label} ({timeframe}) | {bullish_count}/10 bullish | {label}")
 st.session_state.alerts = st.session_state.alerts[:30]
+
+# ── PRECOMPUTE DISPLAY VALUES ──────────────────────────────────
+
+rsi_val    = f"{latest['RSI']:.1f}"          if pd.notna(latest['RSI'])        else "N/A"
+stoch_val  = f"{latest['StochRSI_k']:.1f}"   if pd.notna(latest['StochRSI_k']) else "N/A"
+stochd_val = f"{latest['StochRSI_d']:.1f}"   if pd.notna(latest['StochRSI_d']) else "N/A"
+macd_val   = f"{latest['MACD']:.2f}"         if pd.notna(latest['MACD'])       else "N/A"
+msig_val   = f"{latest['MACD_signal']:.2f}"  if pd.notna(latest['MACD_signal'])else "N/A"
+mhst_val   = f"{latest['MACD_hist']:.2f}"    if pd.notna(latest['MACD_hist'])  else "N/A"
+bb_pct_val = f"{latest['BB_pct']*100:.0f}%"  if pd.notna(latest['BB_pct'])     else "N/A"
+ema50_val  = f"${latest['EMA_50']:,.0f}"      if pd.notna(latest['EMA_50'])     else "N/A"
+ema200_val = f"${latest['EMA_200']:,.0f}"     if pd.notna(latest['EMA_200'])    else "N/A"
+adx_val    = f"{latest['ADX']:.1f}"          if pd.notna(latest['ADX'])        else "N/A"
+dip_val    = f"{latest['ADX_pos']:.1f}"      if pd.notna(latest['ADX_pos'])    else "N/A"
+din_val    = f"{latest['ADX_neg']:.1f}"      if pd.notna(latest['ADX_neg'])    else "N/A"
+cci_val    = f"{latest['CCI']:.1f}"          if pd.notna(latest['CCI'])        else "N/A"
+wr_val     = f"{latest['WilliamsR']:.1f}"    if pd.notna(latest['WilliamsR'])  else "N/A"
+roc_val    = f"{latest['ROC']:.2f}%"         if pd.notna(latest['ROC'])        else "N/A"
+atr_val    = f"{latest['ATR']:.2f}"          if pd.notna(latest['ATR'])        else "N/A"
 
 # ── MARKET SENTIMENT BAR ──────────────────────────────────────
 
@@ -502,9 +523,9 @@ with title_col:
     st.markdown(f"## {coin_ticker} · ${price:,.2f}  &nbsp; {label}")
 
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("📊 RSI (14)",     round(latest["RSI"], 1)        if pd.notna(latest["RSI"])        else "N/A")
-col2.metric("⚡ Stoch RSI",    round(latest["StochRSI_k"], 1)  if pd.notna(latest["StochRSI_k"])  else "N/A")
-col3.metric("📉 MACD Hist",    round(latest["MACD_hist"], 4)   if pd.notna(latest["MACD_hist"])   else "N/A")
+col1.metric("📊 RSI (14)",     rsi_val)
+col2.metric("⚡ Stoch RSI",    stoch_val)
+col3.metric("📉 MACD Hist",    mhst_val)
 col4.metric("🎯 Signal Score", f"{bullish_count}/10 bullish")
 
 st.markdown("#### 📊 Price Performance")
@@ -553,7 +574,13 @@ st.divider()
 
 # ── MAIN GRAPHS ───────────────────────────────────────────────
 
-st.markdown("#### 📈 RSI + Stochastic RSI")
+st.markdown(
+    f"#### 📈 RSI + Stochastic RSI &nbsp;&nbsp; "
+    f"{val_span('RSI: ' + rsi_val, '#F59E0B')} &nbsp; "
+    f"{val_span('Stoch K: ' + stoch_val, '#60A5FA')} &nbsp; "
+    f"{val_span('Stoch D: ' + stochd_val, '#F472B6')}",
+    unsafe_allow_html=True)
+
 fig1 = make_subplots(rows=2, cols=1, shared_xaxes=True,
                      row_heights=[0.5, 0.5],
                      subplot_titles=("RSI (14)", "Stochastic RSI"))
@@ -577,7 +604,13 @@ st.caption("⚡ Stoch RSI: K line below 20 = reversal up likely (🟢); above 80
 
 st.divider()
 
-st.markdown("#### 💵 Price + Bollinger Bands + EMA + Support & Resistance")
+st.markdown(
+    f"#### 💵 Price + Bollinger Bands + EMA + S/R &nbsp;&nbsp; "
+    f"{val_span('BB: ' + bb_pct_val + ' of band', 'gray')} &nbsp; "
+    f"{val_span('EMA50: ' + ema50_val, '#34D399')} &nbsp; "
+    f"{val_span('EMA200: ' + ema200_val, '#F87171')}",
+    unsafe_allow_html=True)
+
 fig2 = go.Figure()
 fig2.add_trace(go.Candlestick(
     x=df["time"], open=df["open"], high=df["high"],
@@ -606,11 +639,17 @@ fig2.update_layout(
 st.plotly_chart(fig2, use_container_width=True)
 st.caption("📉 Bollinger Bands: Price below lower = oversold (🟢); above upper = overbought (🔴).")
 st.caption("📈 EMA 50 (green) / EMA 200 (red): Golden Cross = bullish (🟢). Death Cross = bearish (🔴).")
-st.caption("🟢 Support (green dotted) = price floors. 🔴 Resistance (red dotted) = price ceilings. Auto-detected from swing highs/lows.")
+st.caption("🟢 Support (green dotted) = price floors. 🔴 Resistance (red dotted) = price ceilings.")
 
 st.divider()
 
-st.markdown("#### 📉 MACD")
+st.markdown(
+    f"#### 📉 MACD &nbsp;&nbsp; "
+    f"{val_span('MACD: ' + macd_val, '#60A5FA')} &nbsp; "
+    f"{val_span('Signal: ' + msig_val, '#F472B6')} &nbsp; "
+    f"{val_span('Hist: ' + mhst_val, 'gray')}",
+    unsafe_allow_html=True)
+
 fig3 = make_subplots(rows=2, cols=1, shared_xaxes=True,
                      row_heights=[0.5, 0.5],
                      subplot_titles=("Price", "MACD"))
@@ -630,7 +669,13 @@ st.caption("📊 Histogram: Growing green bars = strengthening upward momentum. 
 
 st.divider()
 
-st.markdown("#### 📡 ADX — Trend Strength")
+st.markdown(
+    f"#### 📡 ADX — Trend Strength &nbsp;&nbsp; "
+    f"{val_span('ADX: ' + adx_val, '#A78BFA')} &nbsp; "
+    f"{val_span('+DI: ' + dip_val, '#34D399')} &nbsp; "
+    f"{val_span('-DI: ' + din_val, '#F87171')}",
+    unsafe_allow_html=True)
+
 fig_adx = go.Figure()
 fig_adx.add_trace(go.Scatter(x=df["time"], y=df["ADX"],
     name="ADX", line=dict(color="#A78BFA", width=2)))
@@ -646,7 +691,11 @@ st.caption("📡 ADX (purple): >20 = trend forming; >40 = strong. +DI above -DI 
 
 st.divider()
 
-st.markdown("#### 📊 CCI — Commodity Channel Index")
+st.markdown(
+    f"#### 📊 CCI — Commodity Channel Index &nbsp;&nbsp; "
+    f"{val_span('CCI: ' + cci_val, '#F59E0B')}",
+    unsafe_allow_html=True)
+
 fig_cci = go.Figure()
 fig_cci.add_trace(go.Scatter(x=df["time"], y=df["CCI"],
     name="CCI", line=dict(color="#F59E0B", width=2)))
@@ -660,7 +709,11 @@ st.caption("📊 CCI: Below -100 = oversold (🟢). Above +100 = overbought (�
 
 st.divider()
 
-st.markdown("#### 📉 Williams %R")
+st.markdown(
+    f"#### 📉 Williams %R &nbsp;&nbsp; "
+    f"{val_span('%R: ' + wr_val, '#60A5FA')}",
+    unsafe_allow_html=True)
+
 fig_wr = go.Figure()
 fig_wr.add_trace(go.Scatter(x=df["time"], y=df["WilliamsR"],
     name="Williams %R", line=dict(color="#60A5FA", width=2)))
@@ -674,7 +727,11 @@ st.caption("📉 Williams %R: Below -80 = oversold (🟢). Above -20 = overbough
 
 st.divider()
 
-st.markdown("#### 📈 ROC — Rate of Change")
+st.markdown(
+    f"#### 📈 ROC — Rate of Change &nbsp;&nbsp; "
+    f"{val_span('ROC: ' + roc_val, '#F59E0B')}",
+    unsafe_allow_html=True)
+
 colors_roc = ["green" if v >= 0 else "red" for v in df["ROC"].fillna(0)]
 fig_roc = go.Figure()
 fig_roc.add_trace(go.Bar(x=df["time"], y=df["ROC"],
@@ -704,7 +761,10 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
 
     st.divider()
 
-    st.markdown("#### 📏 ATR — Average True Range (Volatility)")
+    st.markdown(
+        f"#### 📏 ATR — Average True Range &nbsp;&nbsp; "
+        f"{val_span('ATR: ' + atr_val, '#C084FC')}",
+        unsafe_allow_html=True)
     fig_atr = go.Figure()
     fig_atr.add_trace(go.Scatter(x=df["time"], y=df["ATR"],
         name="ATR", line=dict(color="#C084FC", width=2)))
@@ -714,7 +774,12 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
 
     st.divider()
 
-    st.markdown("#### 🔫 TTM Squeeze — Momentum Buildup")
+    sq_val = "ON 🔒" if latest["squeeze"] else "OFF 🔓"
+    sq_color = "red" if latest["squeeze"] else "lime"
+    st.markdown(
+        f"#### 🔫 TTM Squeeze — Momentum Buildup &nbsp;&nbsp; "
+        f"{val_span('Squeeze: ' + sq_val, sq_color)}",
+        unsafe_allow_html=True)
     squeeze_colors = ["green" if v >= 0 else "red" for v in df["squeeze_hist"].fillna(0)]
     dot_colors     = ["black" if s else "lime" for s in df["squeeze"].fillna(False)]
     fig_sq = go.Figure()
@@ -729,7 +794,6 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
 
     st.divider()
 
-    # Pi Cycle + 200w MA — lazy loaded
     if st.session_state.advanced_loaded:
         with st.spinner("Loading BTC long-term data..."):
             df_btc_long = get_btc_long_daily()
@@ -769,6 +833,16 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
             df_w       = compute_200w_ma(df_btc_long)
             df_w_valid = df_w.dropna(subset=["MA_200w"])
             if not df_w_valid.empty:
+                current_200w = df_w_valid["MA_200w"].iloc[-1]
+                current_btc  = df_w["close"].iloc[-1]
+                pct_above    = ((current_btc - current_200w) / current_200w) * 100
+                pct_color    = "lime" if pct_above < 0 else "#F59E0B"
+                pct_str      = f"{abs(pct_above):.1f}% {'below' if pct_above < 0 else 'above'} 200w MA"
+                st.markdown(
+                    f"#### 📅 200-Week MA &nbsp;&nbsp; "
+                    f"{val_span('$' + f'{current_200w:,.0f}', '#34D399')} &nbsp; "
+                    f"{val_span(pct_str, pct_color)}",
+                    unsafe_allow_html=True)
                 fig_200w = go.Figure()
                 fig_200w.add_trace(go.Scatter(x=df_w["time"], y=df_w["close"],
                     name="BTC Price", line=dict(color="#F59E0B", width=1)))
@@ -776,9 +850,6 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
                     name="200-week MA", line=dict(color="#34D399", width=2.5)))
                 fig_200w.update_layout(height=400, title="BTC Price vs 200-Week MA")
                 st.plotly_chart(fig_200w, use_container_width=True)
-                current_200w = df_w_valid["MA_200w"].iloc[-1]
-                current_btc  = df_w["close"].iloc[-1]
-                pct_above    = ((current_btc - current_200w) / current_200w) * 100
                 if pct_above < 0:
                     st.markdown(f"🟢 **BTC is {abs(pct_above):.1f}% BELOW the 200-week MA (${current_200w:,.0f})** — historically a generational buy zone.")
                 else:
