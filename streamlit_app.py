@@ -24,10 +24,10 @@ st.markdown("""
     padding: 4px 0px !important;
 }
 .block-container {
-    padding-top: 1rem !important;
+    padding-top: 2rem !important;
 }
 [data-testid="stAppViewBlockContainer"] {
-    padding-top: 1rem !important;
+    padding-top: 1.5rem !important;
 }
 </style>
 """, unsafe_allow_html=True)
