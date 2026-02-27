@@ -15,7 +15,8 @@ COINS = {
     "Solana (SOL)": "solana",
     "XRP": "ripple",
     "BNB": "binancecoin",
-    "DOT": "dot",
+    "DOT": "polkadot",
+    "LINK": "chainlink"
 }
 
 st.sidebar.header("⚙️ Settings")
