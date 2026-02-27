@@ -763,7 +763,7 @@ logo_col, title_col = st.columns([1, 11])
 with logo_col:
     st.image(coin_logo, width=48)
 with title_col:
-    st.markdown(f"### {coin_ticker} · ${price:,.2f}  &nbsp; {display_label}")
+    st.markdown(f"#### {coin_ticker} · ${price:,.2f}  &nbsp; {display_label}")
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("📊 RSI (14)",     rsi_val)
