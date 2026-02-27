@@ -50,7 +50,8 @@ st.sidebar.header("⚙️ Settings")
 coin_label = st.sidebar.selectbox("Select Coin", list(COINS.keys()))
 coin_id, coin_ticker, coin_logo = COINS[coin_label]
 timeframe = st.sidebar.radio("Timeframe", ["Daily", "Weekly"])
-days = 1460 if timeframe == "Weekly" else 180   # 4 years for weekly EMA 200
+#days = 1460 if timeframe == "Weekly" else 180   # 4 years for weekly EMA 200
+days = 730 if timeframe == "Weekly" else 180
 
 if st.sidebar.button("🔄 Force Refresh"):
     st.cache_data.clear()
