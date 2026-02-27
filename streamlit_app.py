@@ -6,10 +6,14 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
 import time
-
-CG_KEY = st.secrets["COINGECKO_API_KEY"]
+from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(layout="wide", page_title="Crypto Signal Dashboard")
+
+# Auto-refresh every 60 seconds
+st_autorefresh(interval=60_000, key="price_refresh")
+
+CG_KEY = st.secrets["COINGECKO_API_KEY"]
 
 st.markdown("""
 <style>
@@ -49,31 +53,53 @@ coin_id, coin_ticker, coin_logo = COINS[coin_label]
 timeframe = st.sidebar.radio("Timeframe", ["Daily", "Weekly"])
 days = 365 if timeframe == "Weekly" else 180
 
-# ── API WRAPPER ────────────────────────────────────────────────
+if st.sidebar.button("🔄 Force Refresh"):
+    st.cache_data.clear()
+    st.rerun()
+
+# ── API WRAPPERS ───────────────────────────────────────────────
 
 def coingecko_get(url, params=None, retries=3, backoff=8):
     headers = {
-    "accept": "application/json",
-    "x-cg-demo-api-key": CG_KEY
+        "accept": "application/json",
+        "x-cg-demo-api-key": CG_KEY
     }
     for attempt in range(retries):
         try:
             r = requests.get(url, params=params, headers=headers, timeout=15)
             if r.status_code == 429:
-                wait = backoff * (attempt + 1)
-                time.sleep(wait)
+                time.sleep(backoff * (attempt + 1))
                 continue
             r.raise_for_status()
             return r
         except requests.exceptions.HTTPError:
             if attempt == retries - 1:
-                raise
+                return None
+            time.sleep(backoff)
+    return None
+
+def coingecko_get_fast(url, params=None, retries=2, backoff=3):
+    headers = {
+        "accept": "application/json",
+        "x-cg-demo-api-key": CG_KEY
+    }
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, params=params, headers=headers, timeout=10)
+            if r.status_code == 429:
+                time.sleep(backoff * (attempt + 1))
+                continue
+            r.raise_for_status()
+            return r
+        except requests.exceptions.HTTPError:
+            if attempt == retries - 1:
+                return None
             time.sleep(backoff)
     return None
 
 # ── DATA FETCHERS ──────────────────────────────────────────────
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600)
 def get_fear_greed():
     try:
         r = requests.get("https://api.alternative.me/fng/?limit=30", timeout=10)
@@ -87,13 +113,13 @@ def get_fear_greed():
     except:
         return pd.DataFrame()
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=1800)
 def get_global_data():
     try:
-        r = coingecko_get("https://api.coingecko.com/api/v3/global")
+        r = coingecko_get_fast("https://api.coingecko.com/api/v3/global")
         if r is None:
             return None, None, None
-        data = r.json()["data"]
+        data       = r.json()["data"]
         btc_dom    = data["market_cap_percentage"].get("btc", None)
         eth_dom    = data["market_cap_percentage"].get("eth", 0)
         total_mcap = data.get("total_market_cap", {}).get("usd", None)
@@ -102,7 +128,7 @@ def get_global_data():
     except:
         return None, None, None
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def get_market_data(coin_id):
     try:
         r = coingecko_get(
@@ -129,7 +155,7 @@ def get_market_data(coin_id):
         st.error(f"Market data error: {e}")
         return {}
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600)
 def get_ohlc_data(coin_id, days):
     try:
         r = coingecko_get(
@@ -148,13 +174,8 @@ def get_ohlc_data(coin_id, days):
         st.error(f"OHLC error: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=86400)
 def get_btc_long_daily():
-    """
-    Fetch max daily BTC price history for Pi Cycle + 200w MA.
-    Uses 'max' days which returns full history on free tier.
-    No interval param needed — CoinGecko auto-returns daily for >90 days.
-    """
     try:
         r = coingecko_get(
             "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart",
@@ -175,35 +196,35 @@ def get_btc_long_daily():
 # ── INDICATORS ─────────────────────────────────────────────────
 
 def compute_indicators(df):
-    df["RSI"]       = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
-    stoch           = ta.momentum.StochRSIIndicator(df["close"], window=14)
+    df["RSI"]        = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
+    stoch            = ta.momentum.StochRSIIndicator(df["close"], window=14)
     df["StochRSI_k"] = stoch.stochrsi_k() * 100
     df["StochRSI_d"] = stoch.stochrsi_d() * 100
-    macd            = ta.trend.MACD(df["close"])
+    macd             = ta.trend.MACD(df["close"])
     df["MACD"]       = macd.macd()
     df["MACD_signal"] = macd.macd_signal()
     df["MACD_hist"]  = macd.macd_diff()
-    bb              = ta.volatility.BollingerBands(df["close"], window=20)
-    df["BB_upper"]  = bb.bollinger_hband()
-    df["BB_lower"]  = bb.bollinger_lband()
-    df["BB_mid"]    = bb.bollinger_mavg()
-    df["BB_pct"]    = bb.bollinger_pband()
-    df["EMA_50"]    = ta.trend.EMAIndicator(df["close"], window=50).ema_indicator()
-    df["EMA_200"]   = ta.trend.EMAIndicator(df["close"], window=200).ema_indicator()
-    adx             = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14)
-    df["ADX"]       = adx.adx()
-    df["ADX_pos"]   = adx.adx_pos()
-    df["ADX_neg"]   = adx.adx_neg()
-    df["CCI"]       = ta.trend.CCIIndicator(df["high"], df["low"], df["close"], window=20).cci()
-    df["WilliamsR"] = ta.momentum.WilliamsRIndicator(df["high"], df["low"], df["close"], lbp=14).williams_r()
-    df["ROC"]       = ta.momentum.ROCIndicator(df["close"], window=12).roc()
-    df["ATR"]       = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range()
+    bb               = ta.volatility.BollingerBands(df["close"], window=20)
+    df["BB_upper"]   = bb.bollinger_hband()
+    df["BB_lower"]   = bb.bollinger_lband()
+    df["BB_mid"]     = bb.bollinger_mavg()
+    df["BB_pct"]     = bb.bollinger_pband()
+    df["EMA_50"]     = ta.trend.EMAIndicator(df["close"], window=50).ema_indicator()
+    df["EMA_200"]    = ta.trend.EMAIndicator(df["close"], window=200).ema_indicator()
+    adx              = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14)
+    df["ADX"]        = adx.adx()
+    df["ADX_pos"]    = adx.adx_pos()
+    df["ADX_neg"]    = adx.adx_neg()
+    df["CCI"]        = ta.trend.CCIIndicator(df["high"], df["low"], df["close"], window=20).cci()
+    df["WilliamsR"]  = ta.momentum.WilliamsRIndicator(df["high"], df["low"], df["close"], lbp=14).williams_r()
+    df["ROC"]        = ta.momentum.ROCIndicator(df["close"], window=12).roc()
+    df["ATR"]        = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range()
     return df
 
 def compute_squeeze(df):
-    bb      = ta.volatility.BollingerBands(df["close"], window=20, window_dev=2)
-    kc_mid  = df["close"].rolling(20).mean()
-    atr     = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=20).average_true_range()
+    bb       = ta.volatility.BollingerBands(df["close"], window=20, window_dev=2)
+    kc_mid   = df["close"].rolling(20).mean()
+    atr      = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=20).average_true_range()
     kc_upper = kc_mid + 1.5 * atr
     kc_lower = kc_mid - 1.5 * atr
     df["squeeze"] = (bb.bollinger_hband() < kc_upper) & (bb.bollinger_lband() > kc_lower)
@@ -218,11 +239,9 @@ def compute_pi_cycle(df):
     df = df.copy()
     df["MA_111"]   = df["close"].rolling(111).mean()
     df["MA_350x2"] = df["close"].rolling(350).mean() * 2
-    # Only drop where MA_111 is NaN — MA_350x2 may still be building
     return df.dropna(subset=["MA_111"]).reset_index(drop=True)
 
 def compute_200w_ma(df_daily):
-    """Resample daily BTC data to weekly, compute 200-week MA."""
     df = df_daily.copy()
     df = df.set_index("time").resample("W").last().reset_index()
     df["MA_200w"] = df["close"].rolling(200).mean()
@@ -408,14 +427,16 @@ if "alerts" not in st.session_state:
 
 # ── LOAD ALL DATA ──────────────────────────────────────────────
 
-market                      = get_market_data(coin_id)
-df                          = get_ohlc_data(coin_id, days)
-fg_df                       = get_fear_greed()
-btc_dom, total_mcap, alt_index = get_global_data()
-df_btc_long                 = get_btc_long_daily()   # single fetch for Pi Cycle + 200w MA
+with st.spinner("Loading price data..."):
+    market = get_market_data(coin_id)
+    df     = get_ohlc_data(coin_id, days)
+
+with st.spinner("Loading global sentiment..."):
+    fg_df                          = get_fear_greed()
+    btc_dom, total_mcap, alt_index = get_global_data()
 
 if df.empty or len(df) < 20:
-    st.error("Not enough data. Try refreshing.")
+    st.error("Not enough OHLC data. Try refreshing.")
     st.stop()
 
 if timeframe == "Weekly":
@@ -433,7 +454,7 @@ score, bullish_count, bearish_count, indicators = composite_score(latest)
 neutral_count = 10 - bullish_count - bearish_count
 label         = signal_label(score)
 
-ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 st.session_state.alerts.insert(0,
     f"{ts} | {coin_label} ({timeframe}) | {bullish_count}/10 bullish | {label}")
 st.session_state.alerts = st.session_state.alerts[:30]
@@ -481,9 +502,9 @@ with title_col:
     st.markdown(f"## {coin_ticker} · ${price:,.2f}  &nbsp; {label}")
 
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("📊 RSI (14)",    round(latest["RSI"], 1)       if pd.notna(latest["RSI"])       else "N/A")
-col2.metric("⚡ Stoch RSI",   round(latest["StochRSI_k"], 1) if pd.notna(latest["StochRSI_k"]) else "N/A")
-col3.metric("📉 MACD Hist",   round(latest["MACD_hist"], 4)  if pd.notna(latest["MACD_hist"])  else "N/A")
+col1.metric("📊 RSI (14)",     round(latest["RSI"], 1)        if pd.notna(latest["RSI"])        else "N/A")
+col2.metric("⚡ Stoch RSI",    round(latest["StochRSI_k"], 1)  if pd.notna(latest["StochRSI_k"])  else "N/A")
+col3.metric("📉 MACD Hist",    round(latest["MACD_hist"], 4)   if pd.notna(latest["MACD_hist"])   else "N/A")
 col4.metric("🎯 Signal Score", f"{bullish_count}/10 bullish")
 
 st.markdown("#### 📊 Price Performance")
@@ -503,6 +524,8 @@ vol  = market.get("volume_24h")
 mcap = market.get("market_cap")
 if vol:  v1.metric("💹 24h Volume", f"${vol/1e9:.2f}B")
 if mcap: v2.metric("🏦 Market Cap", f"${mcap/1e9:.1f}B")
+
+st.caption(f"⏱ Price last updated: {ts} · Indicators refresh every 10 min · Advanced data refreshes daily")
 
 st.divider()
 
@@ -549,8 +572,8 @@ fig1.add_hline(y=80, line_dash="dash", line_color="red",  row=2, col=1)
 fig1.add_hline(y=20, line_dash="dash", line_color="lime", row=2, col=1)
 fig1.update_layout(height=600)
 st.plotly_chart(fig1, use_container_width=True)
-st.caption("📊 RSI: Measures momentum 0–100. Below 30 = strongly oversold (🟢 Strong Buy); below 40 = buy zone; above 70 = overbought (🔴 Sell).")
-st.caption("⚡ Stochastic RSI: Faster/more sensitive than RSI. K line below 20 = potential reversal up (🟢 Buy); above 80 = potential reversal down (🔴 Sell).")
+st.caption("📊 RSI: Below 30 = strongly oversold (🟢 Strong Buy); below 40 = buy zone; above 70 = overbought (🔴 Sell).")
+st.caption("⚡ Stoch RSI: K line below 20 = reversal up likely (🟢); above 80 = reversal down likely (🔴).")
 
 st.divider()
 
@@ -581,9 +604,9 @@ fig2.update_layout(
     title=f"{coin_ticker} Price + BB + EMA + S/R — {timeframe}",
     height=650, xaxis_rangeslider_visible=False)
 st.plotly_chart(fig2, use_container_width=True)
-st.caption("📉 Bollinger Bands (gray): Price below lower band = oversold (🟢 Buy); above upper band = overbought (🔴 Sell). Band width = volatility.")
-st.caption("📈 EMA 50 (green) / EMA 200 (red): Golden Cross = EMA 50 above EMA 200 (🟢). Death Cross = EMA 50 below EMA 200 (🔴).")
-st.caption("🟢 Support (green dotted) = price floors. 🔴 Resistance (red dotted) = price ceilings. Auto-detected from recent swing highs/lows.")
+st.caption("📉 Bollinger Bands: Price below lower = oversold (🟢); above upper = overbought (🔴).")
+st.caption("📈 EMA 50 (green) / EMA 200 (red): Golden Cross = bullish (🟢). Death Cross = bearish (🔴).")
+st.caption("🟢 Support (green dotted) = price floors. 🔴 Resistance (red dotted) = price ceilings. Auto-detected from swing highs/lows.")
 
 st.divider()
 
@@ -602,8 +625,8 @@ fig3.add_trace(go.Bar(x=df["time"], y=df["MACD_hist"],
     name="Histogram", marker_color=colors_macd), row=2, col=1)
 fig3.update_layout(height=600)
 st.plotly_chart(fig3, use_container_width=True)
-st.caption("📉 MACD (blue) vs Signal (pink): Blue crossing above pink = bullish (🟢). Blue crossing below pink = bearish (🔴).")
-st.caption("📊 Histogram: Growing green bars = strengthening upward momentum. Growing red bars = strengthening downward momentum.")
+st.caption("📉 MACD (blue) vs Signal (pink): Blue above pink = bullish (🟢). Blue below pink = bearish (🔴).")
+st.caption("📊 Histogram: Growing green bars = strengthening upward momentum. Growing red = downward momentum.")
 
 st.divider()
 
@@ -619,7 +642,7 @@ fig_adx.add_hline(y=20, line_dash="dash", line_color="gray")
 fig_adx.add_hline(y=40, line_dash="dash", line_color="white")
 fig_adx.update_layout(height=350)
 st.plotly_chart(fig_adx, use_container_width=True)
-st.caption("📡 ADX (purple): Trend strength, not direction. >20 = trend forming; >40 = strong. Green +DI above red -DI = bullish (🟢). Red -DI above green = bearish (🔴). <20 = choppy market.")
+st.caption("📡 ADX (purple): >20 = trend forming; >40 = strong. +DI above -DI = bullish (🟢). -DI above +DI = bearish (🔴). <20 = choppy.")
 
 st.divider()
 
@@ -633,7 +656,7 @@ fig_cci.add_hrect(y0=-300, y1=-100, fillcolor="green", opacity=0.05)
 fig_cci.add_hrect(y0=100,  y1=300,  fillcolor="red",   opacity=0.05)
 fig_cci.update_layout(height=350)
 st.plotly_chart(fig_cci, use_container_width=True)
-st.caption("📊 CCI: Below -100 = oversold (🟢 Buy). Above +100 = overbought (🔴 Sell). Between -100 and +100 = neutral.")
+st.caption("📊 CCI: Below -100 = oversold (🟢). Above +100 = overbought (🔴). Between = neutral.")
 
 st.divider()
 
@@ -647,7 +670,7 @@ fig_wr.add_hrect(y0=-100, y1=-80, fillcolor="green", opacity=0.05)
 fig_wr.add_hrect(y0=-20,  y1=0,   fillcolor="red",   opacity=0.05)
 fig_wr.update_layout(height=350)
 st.plotly_chart(fig_wr, use_container_width=True)
-st.caption("📉 Williams %R: -100 to 0. Below -80 = oversold (🟢). Above -20 = overbought (🔴). Mid-range = neutral.")
+st.caption("📉 Williams %R: Below -80 = oversold (🟢). Above -20 = overbought (🔴). Mid-range = neutral.")
 
 st.divider()
 
@@ -661,7 +684,7 @@ fig_roc.add_hline(y=-5, line_dash="dash", line_color="red")
 fig_roc.add_hline(y=0,  line_color="gray")
 fig_roc.update_layout(height=350)
 st.plotly_chart(fig_roc, use_container_width=True)
-st.caption("📈 ROC: % price change over 12 periods. Above +5% = strong positive momentum (🟢). Below -5% = strong negative momentum (🔴). Near 0 = stalling.")
+st.caption("📈 ROC: Above +5% = strong positive momentum (🟢). Below -5% = strong negative momentum (🔴). Near 0 = stalling.")
 
 st.divider()
 
@@ -669,9 +692,15 @@ st.divider()
 
 with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
 
+    load_advanced = st.button("📡 Load Advanced Data (Pi Cycle, 200w MA)")
+    if "advanced_loaded" not in st.session_state:
+        st.session_state.advanced_loaded = False
+    if load_advanced:
+        st.session_state.advanced_loaded = True
+
     trend_label, trend_color = detect_trend_structure(df)
     st.markdown(f"#### 📐 Market Structure: {trend_label}")
-    st.caption("Detects Higher Highs & Higher Lows (uptrend), Lower Highs & Lower Lows (downtrend), or no clear structure. Based on recent swing points.")
+    st.caption("Detects Higher Highs & Higher Lows (uptrend), Lower Highs & Lower Lows (downtrend), or no clear structure.")
 
     st.divider()
 
@@ -681,7 +710,7 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
         name="ATR", line=dict(color="#C084FC", width=2)))
     fig_atr.update_layout(height=300)
     st.plotly_chart(fig_atr, use_container_width=True)
-    st.caption("📏 ATR: Average price movement per period. Rising = increasing volatility. Falling = calming. Use for stop-loss sizing — place stops 1.5–2× ATR from entry.")
+    st.caption("📏 ATR: Rising = increasing volatility. Falling = calming. Use for stop-loss sizing — place stops 1.5–2× ATR from entry.")
 
     st.divider()
 
@@ -696,70 +725,72 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
         name="Squeeze (black=on, lime=off)"))
     fig_sq.update_layout(height=350)
     st.plotly_chart(fig_sq, use_container_width=True)
-    st.caption("🔫 TTM Squeeze: Black dots = squeeze ON (coiling for big move). Lime dots = squeeze OFF (move released). Green bars = bullish momentum; red = bearish.")
+    st.caption("🔫 TTM Squeeze: Black dots = coiling for big move. Lime = move released. Green bars = bullish momentum; red = bearish.")
 
     st.divider()
 
-    # Pi Cycle — uses df_btc_long (max daily history)
-    st.markdown("#### 🔄 Pi Cycle Top Indicator (BTC Daily — Max History)")
-    if not df_btc_long.empty and len(df_btc_long) >= 111:
-        df_pi = compute_pi_cycle(df_btc_long)
-        if not df_pi.empty:
-            fig_pi = go.Figure()
-            fig_pi.add_trace(go.Scatter(x=df_pi["time"], y=df_pi["close"],
-                name="BTC Price", line=dict(color="#F59E0B", width=1)))
-            fig_pi.add_trace(go.Scatter(x=df_pi["time"], y=df_pi["MA_111"],
-                name="111-day MA", line=dict(color="#60A5FA", width=2)))
-            # Only plot MA_350x2 where it exists
-            df_pi_350 = df_pi.dropna(subset=["MA_350x2"])
-            if not df_pi_350.empty:
-                fig_pi.add_trace(go.Scatter(x=df_pi_350["time"], y=df_pi_350["MA_350x2"],
-                    name="350-day MA ×2", line=dict(color="#F87171", width=2)))
-            fig_pi.update_layout(height=400, title="Pi Cycle Top — BTC Max Daily History")
-            st.plotly_chart(fig_pi, use_container_width=True)
+    # Pi Cycle + 200w MA — lazy loaded
+    if st.session_state.advanced_loaded:
+        with st.spinner("Loading BTC long-term data..."):
+            df_btc_long = get_btc_long_daily()
 
-            last_pi = df_pi.iloc[-1]
-            if pd.notna(last_pi.get("MA_350x2")):
-                gap_pct = ((last_pi["MA_111"] - last_pi["MA_350x2"]) / last_pi["MA_350x2"]) * 100
-                if last_pi["MA_111"] >= last_pi["MA_350x2"]:
-                    st.markdown("⚠️ **Pi Cycle TOP signal ACTIVE** — 111-day MA has crossed above 2× 350-day MA. Historically signals cycle top.")
+        st.markdown("#### 🔄 Pi Cycle Top Indicator (BTC Daily — Max History)")
+        if not df_btc_long.empty and len(df_btc_long) >= 111:
+            df_pi = compute_pi_cycle(df_btc_long)
+            if not df_pi.empty:
+                fig_pi = go.Figure()
+                fig_pi.add_trace(go.Scatter(x=df_pi["time"], y=df_pi["close"],
+                    name="BTC Price", line=dict(color="#F59E0B", width=1)))
+                fig_pi.add_trace(go.Scatter(x=df_pi["time"], y=df_pi["MA_111"],
+                    name="111-day MA", line=dict(color="#60A5FA", width=2)))
+                df_pi_350 = df_pi.dropna(subset=["MA_350x2"])
+                if not df_pi_350.empty:
+                    fig_pi.add_trace(go.Scatter(x=df_pi_350["time"], y=df_pi_350["MA_350x2"],
+                        name="350-day MA ×2", line=dict(color="#F87171", width=2)))
+                fig_pi.update_layout(height=400, title="Pi Cycle Top — BTC Max Daily History")
+                st.plotly_chart(fig_pi, use_container_width=True)
+                last_pi = df_pi.iloc[-1]
+                if pd.notna(last_pi.get("MA_350x2")):
+                    gap_pct = ((last_pi["MA_111"] - last_pi["MA_350x2"]) / last_pi["MA_350x2"]) * 100
+                    if last_pi["MA_111"] >= last_pi["MA_350x2"]:
+                        st.markdown("⚠️ **Pi Cycle TOP signal ACTIVE** — 111-day MA crossed above 2× 350-day MA.")
+                    else:
+                        st.markdown(f"✅ **No Pi Cycle top signal.** 111-day MA is {abs(gap_pct):.1f}% below the 2× 350-day MA.")
                 else:
-                    st.markdown(f"✅ **No Pi Cycle top signal.** 111-day MA is {abs(gap_pct):.1f}% below the 2× 350-day MA.")
-            else:
-                st.markdown("⏳ 350-day MA still building — need more history for full Pi Cycle signal.")
+                    st.markdown("⏳ 350-day MA still building.")
         else:
-            st.info("Not enough data to render Pi Cycle.")
-    else:
-        st.info("Pi Cycle data unavailable or insufficient.")
-    st.caption("🔄 Pi Cycle Top: When 111-day MA crosses above 2× 350-day MA it has historically marked BTC cycle tops within days. A SELL/top signal only.")
+            st.info("Not enough data for Pi Cycle.")
+        st.caption("🔄 Pi Cycle Top: When 111-day MA crosses above 2× 350-day MA it has historically marked BTC cycle tops. SELL signal only.")
 
-    st.divider()
+        st.divider()
 
-    # 200-week MA — resampled from df_btc_long
-    st.markdown("#### 📅 200-Week Moving Average (BTC Bear Market Floor)")
-    if not df_btc_long.empty and len(df_btc_long) >= 200:
-        df_w = compute_200w_ma(df_btc_long)
-        df_w_valid = df_w.dropna(subset=["MA_200w"])
-        if not df_w_valid.empty:
-            fig_200w = go.Figure()
-            fig_200w.add_trace(go.Scatter(x=df_w["time"], y=df_w["close"],
-                name="BTC Price", line=dict(color="#F59E0B", width=1)))
-            fig_200w.add_trace(go.Scatter(x=df_w_valid["time"], y=df_w_valid["MA_200w"],
-                name="200-week MA", line=dict(color="#34D399", width=2.5)))
-            fig_200w.update_layout(height=400, title="BTC Price vs 200-Week MA")
-            st.plotly_chart(fig_200w, use_container_width=True)
-            current_200w = df_w_valid["MA_200w"].iloc[-1]
-            current_btc  = df_w["close"].iloc[-1]
-            pct_above    = ((current_btc - current_200w) / current_200w) * 100
-            if pct_above < 0:
-                st.markdown(f"🟢 **BTC is {abs(pct_above):.1f}% BELOW the 200-week MA (${current_200w:,.0f})** — historically a generational buy zone.")
+        st.markdown("#### 📅 200-Week Moving Average (BTC Bear Market Floor)")
+        if not df_btc_long.empty and len(df_btc_long) >= 200:
+            df_w       = compute_200w_ma(df_btc_long)
+            df_w_valid = df_w.dropna(subset=["MA_200w"])
+            if not df_w_valid.empty:
+                fig_200w = go.Figure()
+                fig_200w.add_trace(go.Scatter(x=df_w["time"], y=df_w["close"],
+                    name="BTC Price", line=dict(color="#F59E0B", width=1)))
+                fig_200w.add_trace(go.Scatter(x=df_w_valid["time"], y=df_w_valid["MA_200w"],
+                    name="200-week MA", line=dict(color="#34D399", width=2.5)))
+                fig_200w.update_layout(height=400, title="BTC Price vs 200-Week MA")
+                st.plotly_chart(fig_200w, use_container_width=True)
+                current_200w = df_w_valid["MA_200w"].iloc[-1]
+                current_btc  = df_w["close"].iloc[-1]
+                pct_above    = ((current_btc - current_200w) / current_200w) * 100
+                if pct_above < 0:
+                    st.markdown(f"🟢 **BTC is {abs(pct_above):.1f}% BELOW the 200-week MA (${current_200w:,.0f})** — historically a generational buy zone.")
+                else:
+                    st.markdown(f"📊 BTC is **{pct_above:.1f}% above** the 200-week MA (${current_200w:,.0f}).")
             else:
-                st.markdown(f"📊 BTC is **{pct_above:.1f}% above** the 200-week MA (${current_200w:,.0f}).")
+                st.info("200-week MA still computing.")
         else:
-            st.info("200-week MA still computing — need 200 weeks of data from the max history fetch.")
+            st.info("Not enough data for 200-week MA.")
+        st.caption("📅 200-Week MA: Every major BTC bear market bottom has been at or near this line. Price below = generational buy opportunity.")
+
     else:
-        st.info("Not enough data for 200-week MA.")
-    st.caption("📅 200-Week MA (green): The legendary BTC bear market floor. Every major bear market bottom has been at or near this line. Price below = rare generational buy opportunity.")
+        st.info("👆 Click 'Load Advanced Data' above to render Pi Cycle and 200-Week MA charts.")
 
     st.divider()
 
@@ -782,7 +813,7 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
         st.plotly_chart(fig_fg, use_container_width=True)
     else:
         st.info("Fear & Greed data unavailable.")
-    st.caption("😨 Fear & Greed: 0 = Extreme Fear (panic = historically good buy), 100 = Extreme Greed (euphoria = historically good sell).")
+    st.caption("😨 0 = Extreme Fear (historically good buy), 100 = Extreme Greed (historically good sell).")
 
 # ── ALERT HISTORY ─────────────────────────────────────────────
 
@@ -795,4 +826,4 @@ else:
     st.info("No alerts yet.")
 st.caption("🔔 Logged each refresh. Resets on app restart.")
 
-st.caption("Data: CoinGecko · alternative.me · Auto-refreshes every 5 minutes")
+st.caption(f"Data: CoinGecko · alternative.me · Price auto-refreshes every 60s · Last run: {ts}")
