@@ -5,6 +5,7 @@ import ta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
+import time
 
 st.set_page_config(layout="wide", page_title="Crypto Signal Dashboard")
 
@@ -46,6 +47,25 @@ coin_id, coin_ticker, coin_logo = COINS[coin_label]
 timeframe = st.sidebar.radio("Timeframe", ["Daily", "Weekly"])
 days = 365 if timeframe == "Weekly" else 180
 
+# ── API WRAPPER ────────────────────────────────────────────────
+
+def coingecko_get(url, params=None, retries=3, backoff=8):
+    headers = {"accept": "application/json"}
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, params=params, headers=headers, timeout=15)
+            if r.status_code == 429:
+                wait = backoff * (attempt + 1)
+                time.sleep(wait)
+                continue
+            r.raise_for_status()
+            return r
+        except requests.exceptions.HTTPError:
+            if attempt == retries - 1:
+                raise
+            time.sleep(backoff)
+    return None
+
 # ── DATA FETCHERS ──────────────────────────────────────────────
 
 @st.cache_data(ttl=300)
@@ -63,52 +83,41 @@ def get_fear_greed():
         return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
-def get_btc_dominance():
+def get_global_data():
     try:
-        headers = {"accept": "application/json"}
-        r = requests.get("https://api.coingecko.com/api/v3/global",
-                         headers=headers, timeout=15)
-        r.raise_for_status()
+        r = coingecko_get("https://api.coingecko.com/api/v3/global")
+        if r is None:
+            return None, None, None
         data = r.json()["data"]
-        btc_dom = data["market_cap_percentage"].get("btc", None)
+        btc_dom    = data["market_cap_percentage"].get("btc", None)
+        eth_dom    = data["market_cap_percentage"].get("eth", 0)
         total_mcap = data.get("total_market_cap", {}).get("usd", None)
-        return btc_dom, total_mcap
+        alt_index  = round(100 - (btc_dom or 0) - eth_dom, 1)
+        return btc_dom, total_mcap, alt_index
     except:
-        return None, None
-
-@st.cache_data(ttl=3600)
-def get_altcoin_index():
-    try:
-        headers = {"accept": "application/json"}
-        r = requests.get("https://api.coingecko.com/api/v3/global",
-                         headers=headers, timeout=15)
-        r.raise_for_status()
-        data = r.json()["data"]
-        btc_dom = data["market_cap_percentage"].get("btc", 0)
-        eth_dom = data["market_cap_percentage"].get("eth", 0)
-        return round(100 - btc_dom - eth_dom, 1)
-    except:
-        return None
+        return None, None, None
 
 @st.cache_data(ttl=300)
 def get_market_data(coin_id):
     try:
-        url = f"https://api.coingecko.com/api/v3/coins/{coin_id}"
-        params = {"localization": "false", "tickers": "false",
-                  "community_data": "false", "developer_data": "false"}
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        data = r.json()
+        r = coingecko_get(
+            f"https://api.coingecko.com/api/v3/coins/{coin_id}",
+            params={"localization": "false", "tickers": "false",
+                    "community_data": "false", "developer_data": "false"}
+        )
+        if r is None:
+            return {}
+        data   = r.json()
         market = data.get("market_data", {})
         return {
-            "price": market.get("current_price", {}).get("usd", 0),
-            "change_1h": market.get("price_change_percentage_1h_in_currency", {}).get("usd", None),
+            "price":      market.get("current_price", {}).get("usd", 0),
+            "change_1h":  market.get("price_change_percentage_1h_in_currency", {}).get("usd", None),
             "change_24h": market.get("price_change_percentage_24h", None),
-            "change_7d": market.get("price_change_percentage_7d", None),
+            "change_7d":  market.get("price_change_percentage_7d", None),
             "change_30d": market.get("price_change_percentage_30d", None),
             "market_cap": market.get("market_cap", {}).get("usd", None),
             "volume_24h": market.get("total_volume", {}).get("usd", None),
-            "ath": market.get("ath", {}).get("usd", None),
+            "ath":        market.get("ath", {}).get("usd", None),
             "ath_change": market.get("ath_change_percentage", {}).get("usd", None),
         }
     except Exception as e:
@@ -118,12 +127,14 @@ def get_market_data(coin_id):
 @st.cache_data(ttl=300)
 def get_ohlc_data(coin_id, days):
     try:
-        url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc"
-        params = {"vs_currency": "usd", "days": str(days)}
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
+        r = coingecko_get(
+            f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc",
+            params={"vs_currency": "usd", "days": str(days)}
+        )
+        if r is None:
+            return pd.DataFrame()
         data = r.json()
-        df = pd.DataFrame(data, columns=["time", "open", "high", "low", "close"])
+        df   = pd.DataFrame(data, columns=["time", "open", "high", "low", "close"])
         df["time"] = pd.to_datetime(df["time"], unit="ms")
         for col in ["open", "high", "low", "close"]:
             df[col] = df[col].astype(float)
@@ -132,81 +143,90 @@ def get_ohlc_data(coin_id, days):
         st.error(f"OHLC error: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=300)
-def get_daily_btc_long():
-    try:
-        url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
-        params = {"vs_currency": "usd", "days": "730", "interval": "daily"}
-        r = requests.get(url, params=params, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        prices = data["prices"]
-        df = pd.DataFrame(prices, columns=["time", "close"])
-        df["time"] = pd.to_datetime(df["time"], unit="ms")
-        df["close"] = df["close"].astype(float)
-        return df
-    except:
-        return pd.DataFrame()
-
 @st.cache_data(ttl=3600)
-def get_btc_weekly_long():
+def get_btc_long_daily():
+    """
+    Fetch max daily BTC price history for Pi Cycle + 200w MA.
+    Uses 'max' days which returns full history on free tier.
+    No interval param needed — CoinGecko auto-returns daily for >90 days.
+    """
     try:
-        url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
-        params = {"vs_currency": "usd", "days": "730", "interval": "daily"}
-        r = requests.get(url, params=params, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        prices = data["prices"]
+        r = coingecko_get(
+            "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart",
+            params={"vs_currency": "usd", "days": "max"}
+        )
+        if r is None:
+            return pd.DataFrame()
+        prices = r.json()["prices"]
         df = pd.DataFrame(prices, columns=["time", "close"])
-        df["time"] = pd.to_datetime(df["time"], unit="ms")
+        df["time"]  = pd.to_datetime(df["time"], unit="ms")
         df["close"] = df["close"].astype(float)
-        df = df.set_index("time").resample("W").last().reset_index()
-        df["MA_200w"] = df["close"].rolling(200).mean()
+        df = df.sort_values("time").reset_index(drop=True)
         return df
-    except:
+    except Exception as e:
+        st.error(f"BTC long daily error: {e}")
         return pd.DataFrame()
 
 # ── INDICATORS ─────────────────────────────────────────────────
 
 def compute_indicators(df):
-    df["RSI"] = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
-    stoch = ta.momentum.StochRSIIndicator(df["close"], window=14)
+    df["RSI"]       = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
+    stoch           = ta.momentum.StochRSIIndicator(df["close"], window=14)
     df["StochRSI_k"] = stoch.stochrsi_k() * 100
     df["StochRSI_d"] = stoch.stochrsi_d() * 100
-    macd = ta.trend.MACD(df["close"])
-    df["MACD"] = macd.macd()
+    macd            = ta.trend.MACD(df["close"])
+    df["MACD"]       = macd.macd()
     df["MACD_signal"] = macd.macd_signal()
-    df["MACD_hist"] = macd.macd_diff()
-    bb = ta.volatility.BollingerBands(df["close"], window=20)
-    df["BB_upper"] = bb.bollinger_hband()
-    df["BB_lower"] = bb.bollinger_lband()
-    df["BB_mid"] = bb.bollinger_mavg()
-    df["BB_pct"] = bb.bollinger_pband()
-    df["EMA_50"] = ta.trend.EMAIndicator(df["close"], window=50).ema_indicator()
-    df["EMA_200"] = ta.trend.EMAIndicator(df["close"], window=200).ema_indicator()
-    adx = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14)
-    df["ADX"] = adx.adx()
-    df["ADX_pos"] = adx.adx_pos()
-    df["ADX_neg"] = adx.adx_neg()
-    df["CCI"] = ta.trend.CCIIndicator(df["high"], df["low"], df["close"], window=20).cci()
-    df["WilliamsR"] = ta.momentum.WilliamsRIndicator(
-        df["high"], df["low"], df["close"], lbp=14).williams_r()
-    df["ROC"] = ta.momentum.ROCIndicator(df["close"], window=12).roc()
-    df["ATR"] = ta.volatility.AverageTrueRange(
-        df["high"], df["low"], df["close"], window=14).average_true_range()
+    df["MACD_hist"]  = macd.macd_diff()
+    bb              = ta.volatility.BollingerBands(df["close"], window=20)
+    df["BB_upper"]  = bb.bollinger_hband()
+    df["BB_lower"]  = bb.bollinger_lband()
+    df["BB_mid"]    = bb.bollinger_mavg()
+    df["BB_pct"]    = bb.bollinger_pband()
+    df["EMA_50"]    = ta.trend.EMAIndicator(df["close"], window=50).ema_indicator()
+    df["EMA_200"]   = ta.trend.EMAIndicator(df["close"], window=200).ema_indicator()
+    adx             = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14)
+    df["ADX"]       = adx.adx()
+    df["ADX_pos"]   = adx.adx_pos()
+    df["ADX_neg"]   = adx.adx_neg()
+    df["CCI"]       = ta.trend.CCIIndicator(df["high"], df["low"], df["close"], window=20).cci()
+    df["WilliamsR"] = ta.momentum.WilliamsRIndicator(df["high"], df["low"], df["close"], lbp=14).williams_r()
+    df["ROC"]       = ta.momentum.ROCIndicator(df["close"], window=12).roc()
+    df["ATR"]       = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range()
+    return df
+
+def compute_squeeze(df):
+    bb      = ta.volatility.BollingerBands(df["close"], window=20, window_dev=2)
+    kc_mid  = df["close"].rolling(20).mean()
+    atr     = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=20).average_true_range()
+    kc_upper = kc_mid + 1.5 * atr
+    kc_lower = kc_mid - 1.5 * atr
+    df["squeeze"] = (bb.bollinger_hband() < kc_upper) & (bb.bollinger_lband() > kc_lower)
+    delta = df["close"] - (
+        (df["high"].rolling(20).max() + df["low"].rolling(20).min()) / 2
+        + df["close"].rolling(20).mean()
+    ) / 2
+    df["squeeze_hist"] = delta.rolling(20).mean()
     return df
 
 def compute_pi_cycle(df):
     df = df.copy()
-    df["MA_111"] = df["close"].rolling(111).mean()
+    df["MA_111"]   = df["close"].rolling(111).mean()
     df["MA_350x2"] = df["close"].rolling(350).mean() * 2
-    return df.dropna(subset=["MA_111"])
+    # Only drop where MA_111 is NaN — MA_350x2 may still be building
+    return df.dropna(subset=["MA_111"]).reset_index(drop=True)
+
+def compute_200w_ma(df_daily):
+    """Resample daily BTC data to weekly, compute 200-week MA."""
+    df = df_daily.copy()
+    df = df.set_index("time").resample("W").last().reset_index()
+    df["MA_200w"] = df["close"].rolling(200).mean()
+    return df
 
 def detect_support_resistance(df, window=3, num_levels=4):
     highs = df["high"] if "high" in df.columns else df["close"]
-    lows = df["low"] if "low" in df.columns else df["close"]
-    resistance = []
-    support = []
+    lows  = df["low"]  if "low"  in df.columns else df["close"]
+    resistance, support = [], []
     for i in range(window, len(df) - window):
         if all(highs.iloc[i] >= highs.iloc[i-window:i]) and \
            all(highs.iloc[i] >= highs.iloc[i+1:i+window+1]):
@@ -223,14 +243,12 @@ def detect_support_resistance(df, window=3, num_levels=4):
                 clustered.append(l)
         return clustered
 
-    resistance = cluster(resistance)[-num_levels:]
-    support = cluster(support)[:num_levels]
-    return support, resistance
+    return cluster(support)[:num_levels], cluster(resistance)[-num_levels:]
 
 def detect_trend_structure(df, window=5):
-    closes = df["close"].values
+    closes    = df["close"].values
     highs_pts = []
-    lows_pts = []
+    lows_pts  = []
     for i in range(window, len(closes) - window):
         if closes[i] == max(closes[max(0, i-window):i+window+1]):
             highs_pts.append(closes[i])
@@ -238,9 +256,9 @@ def detect_trend_structure(df, window=5):
             lows_pts.append(closes[i])
     if len(highs_pts) >= 2 and len(lows_pts) >= 2:
         hh = highs_pts[-1] > highs_pts[-2]
-        hl = lows_pts[-1] > lows_pts[-2]
+        hl = lows_pts[-1]  > lows_pts[-2]
         lh = highs_pts[-1] < highs_pts[-2]
-        ll = lows_pts[-1] < lows_pts[-2]
+        ll = lows_pts[-1]  < lows_pts[-2]
         if hh and hl:
             return "🟢 Uptrend — Higher Highs & Higher Lows", "green"
         elif lh and ll:
@@ -248,21 +266,6 @@ def detect_trend_structure(df, window=5):
         else:
             return "⚪ Choppy — No clear structure", "gray"
     return "⚪ Not enough swing points yet", "gray"
-
-def compute_squeeze(df):
-    bb = ta.volatility.BollingerBands(df["close"], window=20, window_dev=2)
-    kc_mid = df["close"].rolling(20).mean()
-    atr = ta.volatility.AverageTrueRange(
-        df["high"], df["low"], df["close"], window=20).average_true_range()
-    kc_upper = kc_mid + 1.5 * atr
-    kc_lower = kc_mid - 1.5 * atr
-    df["squeeze"] = (bb.bollinger_hband() < kc_upper) & (bb.bollinger_lband() > kc_lower)
-    delta = df["close"] - (
-        (df["high"].rolling(20).max() + df["low"].rolling(20).min()) / 2
-        + df["close"].rolling(20).mean()
-    ) / 2
-    df["squeeze_hist"] = delta.rolling(20).mean()
-    return df
 
 def composite_score(row):
     indicators = []
@@ -298,7 +301,7 @@ def composite_score(row):
     else:
         indicators.append(("MACD", -1, "🔴", f"Bearish — MACD ({macd_val:.2f}) below signal ({macd_sig:.2f})"))
 
-    bb_pct = row["BB_pct"]
+    bb_pct   = row["BB_pct"]
     bb_lower = row["BB_lower"]
     bb_upper = row["BB_upper"]
     if pd.isna(bb_pct):
@@ -330,7 +333,7 @@ def composite_score(row):
     else:
         indicators.append(("EMA 50/200 Cross", -1, "🔴", "Death Cross — EMA 50 below EMA 200 — bearish long-term"))
 
-    adx = row["ADX"]
+    adx     = row["ADX"]
     adx_pos = row["ADX_pos"]
     adx_neg = row["ADX_neg"]
     if pd.isna(adx):
@@ -374,7 +377,7 @@ def composite_score(row):
 
     bullish_count = sum(1 for _, s, _, _ in indicators if s > 0)
     bearish_count = sum(1 for _, s, _, _ in indicators if s < 0)
-    net_score = bullish_count - bearish_count
+    net_score     = bullish_count - bearish_count
     return net_score, bullish_count, bearish_count, indicators
 
 def signal_label(score):
@@ -400,13 +403,11 @@ if "alerts" not in st.session_state:
 
 # ── LOAD ALL DATA ──────────────────────────────────────────────
 
-market       = get_market_data(coin_id)
-df           = get_ohlc_data(coin_id, days)
-fg_df        = get_fear_greed()
-btc_dom, total_mcap = get_btc_dominance()
-alt_index    = get_altcoin_index()
-df_btc_daily = get_daily_btc_long()
-df_btc_weekly = get_btc_weekly_long()
+market                      = get_market_data(coin_id)
+df                          = get_ohlc_data(coin_id, days)
+fg_df                       = get_fear_greed()
+btc_dom, total_mcap, alt_index = get_global_data()
+df_btc_long                 = get_btc_long_daily()   # single fetch for Pi Cycle + 200w MA
 
 if df.empty or len(df) < 20:
     st.error("Not enough data. Try refreshing.")
@@ -421,11 +422,11 @@ df = compute_indicators(df)
 df = compute_squeeze(df)
 df = df.dropna(subset=["RSI"])
 
-latest = df.iloc[-1]
-price  = market.get("price", latest["close"])
+latest        = df.iloc[-1]
+price         = market.get("price", latest["close"])
 score, bullish_count, bearish_count, indicators = composite_score(latest)
 neutral_count = 10 - bullish_count - bearish_count
-label = signal_label(score)
+label         = signal_label(score)
 
 ts = datetime.now().strftime("%Y-%m-%d %H:%M")
 st.session_state.alerts.insert(0,
@@ -440,15 +441,15 @@ ms1, ms2, ms3, ms4 = st.columns(4)
 if not fg_df.empty:
     fg_val   = fg_df.iloc[-1]["value"]
     fg_class = fg_df.iloc[-1]["value_classification"]
-    fg_emoji = "😱" if fg_val <= 25 else ("😨" if fg_val <= 45 else
-               ("😐" if fg_val <= 55 else ("😊" if fg_val <= 75 else "🤑")))
+    fg_emoji = ("😱" if fg_val <= 25 else "😨" if fg_val <= 45 else
+                "😐" if fg_val <= 55 else "😊" if fg_val <= 75 else "🤑")
     ms1.metric("😨 Fear & Greed", f"{fg_val} — {fg_class} {fg_emoji}")
 else:
     ms1.metric("😨 Fear & Greed", "N/A")
 
 if btc_dom:
-    dom_signal = "🟢 BTC leading" if btc_dom > 55 else (
-                 "🔴 Alts leading" if btc_dom < 45 else "⚪ Balanced")
+    dom_signal = ("🟢 BTC leading" if btc_dom > 55 else
+                  "🔴 Alts leading" if btc_dom < 45 else "⚪ Balanced")
     ms2.metric("🟠 BTC Dominance", f"{btc_dom:.1f}%", delta=dom_signal)
 else:
     ms2.metric("🟠 BTC Dominance", "N/A")
@@ -475,9 +476,9 @@ with title_col:
     st.markdown(f"## {coin_ticker} · ${price:,.2f}  &nbsp; {label}")
 
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("📊 RSI (14)", round(latest["RSI"], 1) if pd.notna(latest["RSI"]) else "N/A")
-col2.metric("⚡ Stoch RSI", round(latest["StochRSI_k"], 1) if pd.notna(latest["StochRSI_k"]) else "N/A")
-col3.metric("📉 MACD Hist", round(latest["MACD_hist"], 4) if pd.notna(latest["MACD_hist"]) else "N/A")
+col1.metric("📊 RSI (14)",    round(latest["RSI"], 1)       if pd.notna(latest["RSI"])       else "N/A")
+col2.metric("⚡ Stoch RSI",   round(latest["StochRSI_k"], 1) if pd.notna(latest["StochRSI_k"]) else "N/A")
+col3.metric("📉 MACD Hist",   round(latest["MACD_hist"], 4)  if pd.notna(latest["MACD_hist"])  else "N/A")
 col4.metric("🎯 Signal Score", f"{bullish_count}/10 bullish")
 
 st.markdown("#### 📊 Price Performance")
@@ -495,8 +496,8 @@ if ath:
 v1, v2 = st.columns(2)
 vol  = market.get("volume_24h")
 mcap = market.get("market_cap")
-if vol:  v1.metric("💹 24h Volume",  f"${vol/1e9:.2f}B")
-if mcap: v2.metric("🏦 Market Cap",  f"${mcap/1e9:.1f}B")
+if vol:  v1.metric("💹 24h Volume", f"${vol/1e9:.2f}B")
+if mcap: v2.metric("🏦 Market Cap", f"${mcap/1e9:.1f}B")
 
 st.divider()
 
@@ -577,7 +578,7 @@ fig2.update_layout(
 st.plotly_chart(fig2, use_container_width=True)
 st.caption("📉 Bollinger Bands (gray): Price below lower band = oversold (🟢 Buy); above upper band = overbought (🔴 Sell). Band width = volatility.")
 st.caption("📈 EMA 50 (green) / EMA 200 (red): Golden Cross = EMA 50 above EMA 200 (🟢). Death Cross = EMA 50 below EMA 200 (🔴).")
-st.caption("🟢 Support (green dotted) = price floors where buyers step in. 🔴 Resistance (red dotted) = price ceilings where sellers appear. Auto-detected from recent swing highs/lows.")
+st.caption("🟢 Support (green dotted) = price floors. 🔴 Resistance (red dotted) = price ceilings. Auto-detected from recent swing highs/lows.")
 
 st.divider()
 
@@ -596,7 +597,7 @@ fig3.add_trace(go.Bar(x=df["time"], y=df["MACD_hist"],
     name="Histogram", marker_color=colors_macd), row=2, col=1)
 fig3.update_layout(height=600)
 st.plotly_chart(fig3, use_container_width=True)
-st.caption("📉 MACD (blue) vs Signal (pink): Blue crossing above pink = bullish (🟢 Buy). Blue crossing below pink = bearish (🔴 Sell).")
+st.caption("📉 MACD (blue) vs Signal (pink): Blue crossing above pink = bullish (🟢). Blue crossing below pink = bearish (🔴).")
 st.caption("📊 Histogram: Growing green bars = strengthening upward momentum. Growing red bars = strengthening downward momentum.")
 
 st.divider()
@@ -613,7 +614,7 @@ fig_adx.add_hline(y=20, line_dash="dash", line_color="gray")
 fig_adx.add_hline(y=40, line_dash="dash", line_color="white")
 fig_adx.update_layout(height=350)
 st.plotly_chart(fig_adx, use_container_width=True)
-st.caption("📡 ADX (purple): Trend strength, not direction. >20 = trend forming; >40 = strong trend. Green +DI above red -DI = bullish (🟢). Red -DI above green = bearish (🔴). <20 = choppy market.")
+st.caption("📡 ADX (purple): Trend strength, not direction. >20 = trend forming; >40 = strong. Green +DI above red -DI = bullish (🟢). Red -DI above green = bearish (🔴). <20 = choppy market.")
 
 st.divider()
 
@@ -641,7 +642,7 @@ fig_wr.add_hrect(y0=-100, y1=-80, fillcolor="green", opacity=0.05)
 fig_wr.add_hrect(y0=-20,  y1=0,   fillcolor="red",   opacity=0.05)
 fig_wr.update_layout(height=350)
 st.plotly_chart(fig_wr, use_container_width=True)
-st.caption("📉 Williams %R: -100 to 0. Below -80 = oversold, bounce likely (🟢). Above -20 = overbought, pullback likely (🔴). Mid-range = neutral.")
+st.caption("📉 Williams %R: -100 to 0. Below -80 = oversold (🟢). Above -20 = overbought (🔴). Mid-range = neutral.")
 
 st.divider()
 
@@ -655,7 +656,7 @@ fig_roc.add_hline(y=-5, line_dash="dash", line_color="red")
 fig_roc.add_hline(y=0,  line_color="gray")
 fig_roc.update_layout(height=350)
 st.plotly_chart(fig_roc, use_container_width=True)
-st.caption("📈 ROC: % price change over 12 periods. Above +5% = strong positive momentum (🟢). Below -5% = strong negative momentum (🔴). Near 0 = momentum stalling.")
+st.caption("📈 ROC: % price change over 12 periods. Above +5% = strong positive momentum (🟢). Below -5% = strong negative momentum (🔴). Near 0 = stalling.")
 
 st.divider()
 
@@ -665,7 +666,7 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
 
     trend_label, trend_color = detect_trend_structure(df)
     st.markdown(f"#### 📐 Market Structure: {trend_label}")
-    st.caption("Detects Higher Highs & Higher Lows (uptrend), Lower Highs & Lower Lows (downtrend), or no clear structure (choppy). Based on recent swing points.")
+    st.caption("Detects Higher Highs & Higher Lows (uptrend), Lower Highs & Lower Lows (downtrend), or no clear structure. Based on recent swing points.")
 
     st.divider()
 
@@ -675,13 +676,13 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
         name="ATR", line=dict(color="#C084FC", width=2)))
     fig_atr.update_layout(height=300)
     st.plotly_chart(fig_atr, use_container_width=True)
-    st.caption("📏 ATR: Average price movement per period. Rising = increasing volatility. Falling = market calming. Use for stop-loss sizing — place stops 1.5–2x ATR from entry.")
+    st.caption("📏 ATR: Average price movement per period. Rising = increasing volatility. Falling = calming. Use for stop-loss sizing — place stops 1.5–2× ATR from entry.")
 
     st.divider()
 
     st.markdown("#### 🔫 TTM Squeeze — Momentum Buildup")
     squeeze_colors = ["green" if v >= 0 else "red" for v in df["squeeze_hist"].fillna(0)]
-    dot_colors = ["black" if s else "lime" for s in df["squeeze"].fillna(False)]
+    dot_colors     = ["black" if s else "lime" for s in df["squeeze"].fillna(False)]
     fig_sq = go.Figure()
     fig_sq.add_trace(go.Bar(x=df["time"], y=df["squeeze_hist"],
         name="Momentum", marker_color=squeeze_colors))
@@ -690,84 +691,93 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
         name="Squeeze (black=on, lime=off)"))
     fig_sq.update_layout(height=350)
     st.plotly_chart(fig_sq, use_container_width=True)
-    st.caption("🔫 TTM Squeeze: Black dots = squeeze ON — BB inside Keltner Channels, coiling for big move. Lime dots = squeeze OFF — move released. Green bars = bullish momentum; red = bearish.")
+    st.caption("🔫 TTM Squeeze: Black dots = squeeze ON (coiling for big move). Lime dots = squeeze OFF (move released). Green bars = bullish momentum; red = bearish.")
 
     st.divider()
 
-    st.markdown("#### 🔄 Pi Cycle Top Indicator (BTC Daily)")
-    if not df_btc_daily.empty:
-        df_pi = compute_pi_cycle(df_btc_daily)
+    # Pi Cycle — uses df_btc_long (max daily history)
+    st.markdown("#### 🔄 Pi Cycle Top Indicator (BTC Daily — Max History)")
+    if not df_btc_long.empty and len(df_btc_long) >= 111:
+        df_pi = compute_pi_cycle(df_btc_long)
         if not df_pi.empty:
             fig_pi = go.Figure()
             fig_pi.add_trace(go.Scatter(x=df_pi["time"], y=df_pi["close"],
                 name="BTC Price", line=dict(color="#F59E0B", width=1)))
             fig_pi.add_trace(go.Scatter(x=df_pi["time"], y=df_pi["MA_111"],
                 name="111-day MA", line=dict(color="#60A5FA", width=2)))
-            fig_pi.add_trace(go.Scatter(x=df_pi["time"], y=df_pi["MA_350x2"],
-                name="350-day MA ×2", line=dict(color="#F87171", width=2)))
-            fig_pi.update_layout(height=400, title="Pi Cycle Top — BTC Daily (730 days)")
+            # Only plot MA_350x2 where it exists
+            df_pi_350 = df_pi.dropna(subset=["MA_350x2"])
+            if not df_pi_350.empty:
+                fig_pi.add_trace(go.Scatter(x=df_pi_350["time"], y=df_pi_350["MA_350x2"],
+                    name="350-day MA ×2", line=dict(color="#F87171", width=2)))
+            fig_pi.update_layout(height=400, title="Pi Cycle Top — BTC Max Daily History")
             st.plotly_chart(fig_pi, use_container_width=True)
+
             last_pi = df_pi.iloc[-1]
-            gap_pct = ((last_pi["MA_111"] - last_pi["MA_350x2"]) / last_pi["MA_350x2"]) * 100
-            if last_pi["MA_111"] >= last_pi["MA_350x2"]:
-                st.markdown("⚠️ **Pi Cycle TOP signal ACTIVE** — 111-day MA has crossed above 2× 350-day MA. Historically signals cycle top.")
+            if pd.notna(last_pi.get("MA_350x2")):
+                gap_pct = ((last_pi["MA_111"] - last_pi["MA_350x2"]) / last_pi["MA_350x2"]) * 100
+                if last_pi["MA_111"] >= last_pi["MA_350x2"]:
+                    st.markdown("⚠️ **Pi Cycle TOP signal ACTIVE** — 111-day MA has crossed above 2× 350-day MA. Historically signals cycle top.")
+                else:
+                    st.markdown(f"✅ **No Pi Cycle top signal.** 111-day MA is {abs(gap_pct):.1f}% below the 2× 350-day MA.")
             else:
-                st.markdown(f"✅ **No Pi Cycle top signal.** 111-day MA is {abs(gap_pct):.1f}% below the 2× 350-day MA.")
+                st.markdown("⏳ 350-day MA still building — need more history for full Pi Cycle signal.")
         else:
-            st.info("Not enough data to render Pi Cycle (need 350+ days).")
+            st.info("Not enough data to render Pi Cycle.")
     else:
-        st.info("Pi Cycle data unavailable.")
-    st.caption("🔄 Pi Cycle Top: When 111-day MA crosses above 2× 350-day MA, it has historically marked BTC cycle tops within days. A SELL/top signal only — not a buy signal.")
+        st.info("Pi Cycle data unavailable or insufficient.")
+    st.caption("🔄 Pi Cycle Top: When 111-day MA crosses above 2× 350-day MA it has historically marked BTC cycle tops within days. A SELL/top signal only.")
 
     st.divider()
 
+    # 200-week MA — resampled from df_btc_long
     st.markdown("#### 📅 200-Week Moving Average (BTC Bear Market Floor)")
-    if not df_btc_weekly.empty:
-        df_w = df_btc_weekly.dropna(subset=["MA_200w"])
-        if not df_w.empty:
+    if not df_btc_long.empty and len(df_btc_long) >= 200:
+        df_w = compute_200w_ma(df_btc_long)
+        df_w_valid = df_w.dropna(subset=["MA_200w"])
+        if not df_w_valid.empty:
             fig_200w = go.Figure()
             fig_200w.add_trace(go.Scatter(x=df_w["time"], y=df_w["close"],
                 name="BTC Price", line=dict(color="#F59E0B", width=1)))
-            fig_200w.add_trace(go.Scatter(x=df_w["time"], y=df_w["MA_200w"],
+            fig_200w.add_trace(go.Scatter(x=df_w_valid["time"], y=df_w_valid["MA_200w"],
                 name="200-week MA", line=dict(color="#34D399", width=2.5)))
             fig_200w.update_layout(height=400, title="BTC Price vs 200-Week MA")
             st.plotly_chart(fig_200w, use_container_width=True)
-            current_200w = df_w["MA_200w"].iloc[-1]
+            current_200w = df_w_valid["MA_200w"].iloc[-1]
             current_btc  = df_w["close"].iloc[-1]
-            pct_above = ((current_btc - current_200w) / current_200w) * 100
+            pct_above    = ((current_btc - current_200w) / current_200w) * 100
             if pct_above < 0:
                 st.markdown(f"🟢 **BTC is {abs(pct_above):.1f}% BELOW the 200-week MA (${current_200w:,.0f})** — historically a generational buy zone.")
             else:
                 st.markdown(f"📊 BTC is **{pct_above:.1f}% above** the 200-week MA (${current_200w:,.0f}).")
         else:
-            st.info("Not enough weekly data to compute 200-week MA (need 200 weeks / ~4 years).")
+            st.info("200-week MA still computing — need 200 weeks of data from the max history fetch.")
     else:
-        st.info("200-week MA data unavailable.")
-    st.caption("📅 200-Week MA (green): The legendary BTC bear market floor. Every major bear market bottom has been at or near this line. Price below it = rare generational buy opportunity.")
+        st.info("Not enough data for 200-week MA.")
+    st.caption("📅 200-Week MA (green): The legendary BTC bear market floor. Every major bear market bottom has been at or near this line. Price below = rare generational buy opportunity.")
 
     st.divider()
 
     st.markdown("#### 😨 Fear & Greed Index — 30 Day History")
     if not fg_df.empty:
         fg_colors = [
-            "red" if v > 75 else
-            ("orange" if v > 55 else
-            ("gray" if v > 45 else
-            ("lightblue" if v > 25 else "lime")))
+            "red"       if v > 75 else
+            "orange"    if v > 55 else
+            "gray"      if v > 45 else
+            "lightblue" if v > 25 else
+            "lime"
             for v in fg_df["value"]
         ]
         fig_fg = go.Figure()
         fig_fg.add_trace(go.Bar(x=fg_df["timestamp"], y=fg_df["value"],
             marker_color=fg_colors, name="Fear & Greed"))
-        fig_fg.add_hline(y=75, line_dash="dash", line_color="red",
-                         annotation_text="Extreme Greed")
-        fig_fg.add_hline(y=25, line_dash="dash", line_color="lime",
-                         annotation_text="Extreme Fear")
+        fig_fg.add_hline(y=75, line_dash="dash", line_color="red",  annotation_text="Extreme Greed")
+        fig_fg.add_hline(y=25, line_dash="dash", line_color="lime", annotation_text="Extreme Fear")
         fig_fg.update_layout(height=350, yaxis_range=[0, 100])
         st.plotly_chart(fig_fg, use_container_width=True)
     else:
         st.info("Fear & Greed data unavailable.")
-    st.caption("😨 Fear & Greed: 0 = Extreme Fear (panic = historically good buy), 100 = Extreme Greed (euphoria = historically good sell). Lime = fear zones, red = greed zones.")
+    st.caption("😨 Fear & Greed: 0 = Extreme Fear (panic = historically good buy), 100 = Extreme Greed (euphoria = historically good sell).")
 
 # ── ALERT HISTORY ─────────────────────────────────────────────
 
