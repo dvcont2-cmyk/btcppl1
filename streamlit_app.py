@@ -39,19 +39,33 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 COINS = {
-    "Bitcoin (BTC)": ("bitcoin", "BTC", "https://assets.coingecko.com/coins/images/1/large/bitcoin.png"),
-    "Ethereum (ETH)": ("ethereum", "ETH", "https://assets.coingecko.com/coins/images/279/large/ethereum.png"),
-    "Solana (SOL)": ("solana", "SOL", "https://assets.coingecko.com/coins/images/4128/large/solana.png"),
-    "XRP": ("ripple", "XRP", "https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png"),
-    "BNB": ("binancecoin", "BNB", "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png"),
+    "Bitcoin (BTC)":  ("bitcoin",      "BTC",  "https://assets.coingecko.com/coins/images/1/large/bitcoin.png"),
+    "Ethereum (ETH)": ("ethereum",     "ETH",  "https://assets.coingecko.com/coins/images/279/large/ethereum.png"),
+    "Solana (SOL)":   ("solana",       "SOL",  "https://assets.coingecko.com/coins/images/4128/large/solana.png"),
+    "XRP":            ("ripple",       "XRP",  "https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png"),
+    "BNB":            ("binancecoin",  "BNB",  "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png"),
+    "Polkadot (DOT)": ("polkadot",     "DOT",  "https://assets.coingecko.com/coins/images/12171/large/polkadot.png"),
+    "Chainlink (LINK)":("chainlink",   "LINK", "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png"),
+    "Sui (SUI)":      ("sui",          "SUI",  "https://assets.coingecko.com/coins/images/26375/large/sui_asset.jpeg"),
+    "Hbar (HBAR)":    ("hedera-hashgraph", "HBAR", "https://assets.coingecko.com/coins/images/3688/large/hbar.png"),
+}
+
+CRYPTOCOMPARE_SYMBOLS = {
+    "bitcoin":           "BTC",
+    "ethereum":          "ETH",
+    "solana":            "SOL",
+    "ripple":            "XRP",
+    "binancecoin":       "BNB",
+    "polkadot":          "DOT",
+    "chainlink":         "LINK",
+    "sui":               "SUI",
+    "hedera-hashgraph":  "HBAR",
 }
 
 st.sidebar.header("⚙️ Settings")
 coin_label = st.sidebar.selectbox("Select Coin", list(COINS.keys()))
 coin_id, coin_ticker, coin_logo = COINS[coin_label]
 timeframe = st.sidebar.radio("Timeframe", ["Daily", "Weekly"])
-#days = 1460 if timeframe == "Weekly" else 180   # 4 years for weekly EMA 200
-#days = 730 if timeframe == "Weekly" else 180
 days = 365 if timeframe == "Weekly" else 180
 
 if st.sidebar.button("🔄 Force Refresh"):
@@ -159,9 +173,8 @@ def get_market_data(coin_id):
 @st.cache_data(ttl=600)
 def get_ohlc_data(coin_id, days):
     try:
-        # Map to nearest valid CoinGecko OHLC days value
         valid_days = [1, 7, 14, 30, 90, 180, 365]
-        closest = min(valid_days, key=lambda x: abs(x - days))
+        closest    = min(valid_days, key=lambda x: abs(x - days))
         r = coingecko_get(
             f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc",
             params={"vs_currency": "usd", "days": str(closest)}
@@ -179,26 +192,29 @@ def get_ohlc_data(coin_id, days):
         return pd.DataFrame()
 
 @st.cache_data(ttl=86400)
-def get_btc_long_daily():
-    """Fetch full BTC daily history from CryptoCompare — supports 2000 candles free, no key needed."""
+def get_long_daily(coin_id):
+    """Fetch 2000 days of daily OHLC from CryptoCompare — no API key needed."""
     try:
+        symbol = CRYPTOCOMPARE_SYMBOLS.get(coin_id, "BTC")
         r = requests.get(
             "https://min-api.cryptocompare.com/data/v2/histoday",
-            params={"fsym": "BTC", "tsym": "USD", "limit": 2000},
+            params={"fsym": symbol, "tsym": "USD", "limit": 2000},
             timeout=15
         )
         r.raise_for_status()
         data = r.json()["Data"]["Data"]
-        df = pd.DataFrame(data)
+        df   = pd.DataFrame(data)
         df["time"]  = pd.to_datetime(df["time"], unit="s")
         df["close"] = df["close"].astype(float)
-        df = df[df["close"] > 0]   # remove zero-price rows at start of history
+        df["open"]  = df["open"].astype(float)
+        df["high"]  = df["high"].astype(float)
+        df["low"]   = df["low"].astype(float)
+        df = df[df["close"] > 0]
         df = df.sort_values("time").reset_index(drop=True)
         return df
     except Exception as e:
-        st.error(f"BTC long daily error: {e}")
+        st.error(f"Long daily fetch error: {e}")
         return pd.DataFrame()
-
 
 # ── INDICATORS ─────────────────────────────────────────────────
 
@@ -252,6 +268,30 @@ def compute_200w_ma(df_daily):
     df = df_daily.copy()
     df = df.set_index("time").resample("W").last().reset_index()
     df["MA_200w"] = df["close"].rolling(200).mean()
+    return df
+
+def inject_long_ema(df, df_long, timeframe):
+    """Overwrite EMA 50/200 on main df using long daily history."""
+    if df_long.empty or len(df_long) < 200:
+        return df
+    df_ema = df_long[["time", "close"]].copy()
+    df_ema["EMA_50"]  = ta.trend.EMAIndicator(df_ema["close"], window=50).ema_indicator()
+    df_ema["EMA_200"] = ta.trend.EMAIndicator(df_ema["close"], window=200).ema_indicator()
+    if timeframe == "Weekly":
+        df_ema = df_ema.set_index("time").resample("W").last().reset_index()
+    df      = df.sort_values("time").reset_index(drop=True)
+    df_ema  = df_ema.sort_values("time").reset_index(drop=True)
+    df      = pd.merge_asof(df, df_ema[["time", "EMA_50", "EMA_200"]],
+                            on="time", direction="nearest",
+                            suffixes=("_short", "_long"))
+    for col in ["EMA_50", "EMA_200"]:
+        long_col  = f"{col}_long"
+        short_col = f"{col}_short"
+        if long_col in df.columns:
+            df[col] = df[long_col]
+            df.drop(columns=[long_col], inplace=True)
+        if short_col in df.columns:
+            df.drop(columns=[short_col], inplace=True)
     return df
 
 def detect_support_resistance(df, window=3, num_levels=4):
@@ -438,15 +478,16 @@ if "alerts" not in st.session_state:
 # ── LOAD ALL DATA ──────────────────────────────────────────────
 
 with st.spinner("Loading price data..."):
-    market = get_market_data(coin_id)
-    df     = get_ohlc_data(coin_id, days)
+    market  = get_market_data(coin_id)
+    df      = get_ohlc_data(coin_id, days)
 
 with st.spinner("Loading global sentiment..."):
     fg_df                          = get_fear_greed()
     btc_dom, total_mcap, alt_index = get_global_data()
 
-#st.write(f"DEBUG: days={days}, timeframe={timeframe}, df rows={len(df)}, df empty={df.empty}")
-#st.write(f"DEBUG: df columns={df.columns.tolist()}")
+with st.spinner("Loading long-term data..."):
+    df_long     = get_long_daily(coin_id)
+    df_btc_long = get_long_daily("bitcoin")
 
 if df.empty or len(df) < 20:
     st.error("Not enough OHLC data. Try refreshing.")
@@ -459,6 +500,7 @@ if timeframe == "Weekly":
 
 df = compute_indicators(df)
 df = compute_squeeze(df)
+df = inject_long_ema(df, df_long, timeframe)
 df = df.dropna(subset=["RSI"])
 
 latest        = df.iloc[-1]
@@ -481,8 +523,8 @@ macd_val   = f"{latest['MACD']:.2f}"         if pd.notna(latest['MACD'])       e
 msig_val   = f"{latest['MACD_signal']:.2f}"  if pd.notna(latest['MACD_signal'])else "N/A"
 mhst_val   = f"{latest['MACD_hist']:.2f}"    if pd.notna(latest['MACD_hist'])  else "N/A"
 bb_pct_val = f"{latest['BB_pct']*100:.0f}%"  if pd.notna(latest['BB_pct'])     else "N/A"
-ema50_val  = f"${latest['EMA_50']:,.0f}"      if pd.notna(latest['EMA_50'])     else "N/A"
-ema200_val = f"${latest['EMA_200']:,.0f}"     if pd.notna(latest['EMA_200'])    else "N/A"
+ema50_val  = f"${latest['EMA_50']:,.2f}"      if pd.notna(latest['EMA_50'])     else "N/A"
+ema200_val = f"${latest['EMA_200']:,.2f}"     if pd.notna(latest['EMA_200'])    else "N/A"
 adx_val    = f"{latest['ADX']:.1f}"          if pd.notna(latest['ADX'])        else "N/A"
 dip_val    = f"{latest['ADX_pos']:.1f}"      if pd.notna(latest['ADX_pos'])    else "N/A"
 din_val    = f"{latest['ADX_neg']:.1f}"      if pd.notna(latest['ADX_neg'])    else "N/A"
@@ -548,7 +590,7 @@ delta_metric(p4, "30 Days",  market.get("change_30d"))
 ath        = market.get("ath")
 ath_change = market.get("ath_change")
 if ath:
-    p5.metric("📈 ATH", f"${ath:,.0f}",
+    p5.metric("📈 ATH", f"${ath:,.2f}",
               delta=f"{ath_change:.1f}% from ATH" if ath_change else None)
 
 v1, v2 = st.columns(2)
@@ -557,7 +599,7 @@ mcap = market.get("market_cap")
 if vol:  v1.metric("💹 24h Volume", f"${vol/1e9:.2f}B")
 if mcap: v2.metric("🏦 Market Cap", f"${mcap/1e9:.1f}B")
 
-st.caption(f"⏱ Price last updated: {ts} · Indicators refresh every 10 min · Advanced data refreshes daily")
+st.caption(f"⏱ Price last updated: {ts} · Indicators refresh every 10 min · Long-term data refreshes daily")
 
 st.divider()
 
@@ -640,10 +682,10 @@ fig2.add_trace(go.Scatter(x=df["time"], y=df["EMA_200"],
 support, resistance = detect_support_resistance(df)
 for s in support:
     fig2.add_hline(y=s, line_dash="dot", line_color="lime", opacity=0.6,
-                   annotation_text=f"S ${s:,.0f}", annotation_position="bottom left")
+                   annotation_text=f"S ${s:,.2f}", annotation_position="bottom left")
 for r in resistance:
     fig2.add_hline(y=r, line_dash="dot", line_color="tomato", opacity=0.6,
-                   annotation_text=f"R ${r:,.0f}", annotation_position="top left")
+                   annotation_text=f"R ${r:,.2f}", annotation_position="top left")
 fig2.update_layout(
     title=f"{coin_ticker} Price + BB + EMA + S/R — {timeframe}",
     height=650, xaxis_rangeslider_visible=False)
@@ -785,8 +827,8 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
 
     st.divider()
 
-    sq_val = "ON 🔒" if latest["squeeze"] else "OFF 🔓"
-    sq_color = "red" if latest["squeeze"] else "lime"
+    sq_val   = "ON 🔒" if latest["squeeze"] else "OFF 🔓"
+    sq_color = "red"   if latest["squeeze"] else "lime"
     st.markdown(
         f"#### 🔫 TTM Squeeze — Momentum Buildup &nbsp;&nbsp; "
         f"{val_span('Squeeze: ' + sq_val, sq_color)}",
@@ -806,9 +848,8 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
     st.divider()
 
     if st.session_state.advanced_loaded:
-        with st.spinner("Loading BTC long-term data..."):
-            df_btc_long = get_btc_long_daily()
 
+        # Pi Cycle — BTC only
         st.markdown("#### 🔄 Pi Cycle Top Indicator (BTC Daily — Max History)")
         if not df_btc_long.empty and len(df_btc_long) >= 111:
             df_pi = compute_pi_cycle(df_btc_long)
@@ -822,7 +863,7 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
                 if not df_pi_350.empty:
                     fig_pi.add_trace(go.Scatter(x=df_pi_350["time"], y=df_pi_350["MA_350x2"],
                         name="350-day MA ×2", line=dict(color="#F87171", width=2)))
-                fig_pi.update_layout(height=400, title="Pi Cycle Top — BTC Max Daily History")
+                fig_pi.update_layout(height=400, title="Pi Cycle Top — BTC Daily")
                 st.plotly_chart(fig_pi, use_container_width=True)
                 last_pi = df_pi.iloc[-1]
                 if pd.notna(last_pi.get("MA_350x2")):
@@ -839,6 +880,7 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
 
         st.divider()
 
+        # 200-week MA — BTC only
         st.markdown("#### 📅 200-Week Moving Average (BTC Bear Market Floor)")
         if not df_btc_long.empty and len(df_btc_long) >= 200:
             df_w       = compute_200w_ma(df_btc_long)
@@ -908,4 +950,4 @@ else:
     st.info("No alerts yet.")
 st.caption("🔔 Logged each refresh. Resets on app restart.")
 
-st.caption(f"Data: CoinGecko · alternative.me · Price auto-refreshes every 60s · Last run: {ts}")
+st.caption(f"Data: CoinGecko · CryptoCompare · alternative.me · Price auto-refreshes every 60s · Last run: {ts}")
