@@ -460,6 +460,9 @@ with st.spinner("Loading global sentiment..."):
     fg_df                          = get_fear_greed()
     btc_dom, total_mcap, alt_index = get_global_data()
 
+st.write(f"DEBUG: days={days}, timeframe={timeframe}, df rows={len(df)}, df empty={df.empty}")  # ← ADD THIS
+st.write(f"DEBUG: df columns={df.columns.tolist()}")  # ← ADD THIS
+
 if df.empty or len(df) < 20:
     st.error("Not enough OHLC data. Try refreshing.")
     st.stop()
