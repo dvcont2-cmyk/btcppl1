@@ -326,124 +326,145 @@ with st.expander("📋 All 10 Indicators — Signal Breakdown (click to expand)"
 
 st.divider()
 
-# --- Tabs ---
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📈 RSI + Stoch RSI", "💵 Price + Bollinger + EMA", "📉 MACD", "📡 ADX + CCI + WilliamsR + ROC", "🔔 Alert History"
-])
+st.divider()
 
-with tab1:
-    fig1 = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                         row_heights=[0.5, 0.5],
-                         subplot_titles=("RSI (14)", "Stochastic RSI"))
-    fig1.add_trace(go.Scatter(x=df["time"], y=df["RSI"],
-                              name="RSI", line=dict(color="#F59E0B", width=2)), row=1, col=1)
-    fig1.add_hline(y=70, line_dash="dash", line_color="red", row=1, col=1)
-    fig1.add_hline(y=40, line_dash="dash", line_color="green", row=1, col=1)
-    fig1.add_hline(y=30, line_dash="dash", line_color="lime", row=1, col=1)
-    fig1.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.05, row=1, col=1)
-    fig1.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.05, row=1, col=1)
-    fig1.add_trace(go.Scatter(x=df["time"], y=df["StochRSI_k"],
-                              name="Stoch K", line=dict(color="#60A5FA", width=2)), row=2, col=1)
-    fig1.add_trace(go.Scatter(x=df["time"], y=df["StochRSI_d"],
-                              name="Stoch D", line=dict(color="#F472B6", width=1, dash="dot")), row=2, col=1)
-    fig1.add_hline(y=80, line_dash="dash", line_color="red", row=2, col=1)
-    fig1.add_hline(y=20, line_dash="dash", line_color="lime", row=2, col=1)
-    fig1.update_layout(height=600)
-    st.plotly_chart(fig1, use_container_width=True)
-    st.caption("📊 RSI: Measures momentum 0–100. Below 30 = strongly oversold (🟢 Strong Buy); below 40 = buy zone; above 70 = overbought (🔴 Sell).")
-    st.caption("⚡ Stochastic RSI: Faster/more sensitive than RSI. K line below 20 = potential reversal up (🟢 Buy); above 80 = potential reversal down (🔴 Sell).")
+# --- RSI + Stoch RSI ---
+st.markdown("#### 📈 RSI + Stochastic RSI")
+fig1 = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                     row_heights=[0.5, 0.5],
+                     subplot_titles=("RSI (14)", "Stochastic RSI"))
+fig1.add_trace(go.Scatter(x=df["time"], y=df["RSI"],
+                          name="RSI", line=dict(color="#F59E0B", width=2)), row=1, col=1)
+fig1.add_hline(y=70, line_dash="dash", line_color="red", row=1, col=1)
+fig1.add_hline(y=40, line_dash="dash", line_color="green", row=1, col=1)
+fig1.add_hline(y=30, line_dash="dash", line_color="lime", row=1, col=1)
+fig1.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.05, row=1, col=1)
+fig1.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.05, row=1, col=1)
+fig1.add_trace(go.Scatter(x=df["time"], y=df["StochRSI_k"],
+                          name="Stoch K", line=dict(color="#60A5FA", width=2)), row=2, col=1)
+fig1.add_trace(go.Scatter(x=df["time"], y=df["StochRSI_d"],
+                          name="Stoch D", line=dict(color="#F472B6", width=1, dash="dot")), row=2, col=1)
+fig1.add_hline(y=80, line_dash="dash", line_color="red", row=2, col=1)
+fig1.add_hline(y=20, line_dash="dash", line_color="lime", row=2, col=1)
+fig1.update_layout(height=600)
+st.plotly_chart(fig1, use_container_width=True)
+st.caption("📊 RSI: Measures momentum 0–100. Below 30 = strongly oversold (🟢 Strong Buy); below 40 = buy zone; above 70 = overbought (🔴 Sell).")
+st.caption("⚡ Stochastic RSI: Faster/more sensitive than RSI. K line below 20 = potential reversal up (🟢 Buy); above 80 = potential reversal down (🔴 Sell).")
 
-with tab2:
-    fig2 = go.Figure()
-    fig2.add_trace(go.Candlestick(
-        x=df["time"], open=df["open"], high=df["high"],
-        low=df["low"], close=df["close"], name="Price"
-    ))
-    fig2.add_trace(go.Scatter(x=df["time"], y=df["BB_upper"],
-                              name="BB Upper", line=dict(color="gray", dash="dot", width=1)))
-    fig2.add_trace(go.Scatter(x=df["time"], y=df["BB_lower"],
-                              name="BB Lower", line=dict(color="gray", dash="dot", width=1),
-                              fill="tonexty", fillcolor="rgba(128,128,128,0.1)"))
-    fig2.add_trace(go.Scatter(x=df["time"], y=df["BB_mid"],
-                              name="BB Mid", line=dict(color="gray", width=1)))
-    fig2.add_trace(go.Scatter(x=df["time"], y=df["EMA_50"],
-                              name="EMA 50", line=dict(color="#34D399", width=1.5)))
-    fig2.add_trace(go.Scatter(x=df["time"], y=df["EMA_200"],
-                              name="EMA 200", line=dict(color="#F87171", width=1.5)))
-    fig2.update_layout(
-        title=f"{coin_ticker} Price + Bollinger Bands + EMAs — {timeframe}",
-        height=600, xaxis_rangeslider_visible=False
-    )
-    st.plotly_chart(fig2, use_container_width=True)
-    st.caption("📉 Bollinger Bands (gray): Price below lower band = oversold (🟢 Buy); above upper band = overbought (🔴 Sell). Band width shows volatility — wider = more volatile.")
-    st.caption("📈 EMA 50 (green) / EMA 200 (red): Golden Cross = EMA 50 crosses above EMA 200 (🟢 bullish). Death Cross = EMA 50 crosses below EMA 200 (🔴 bearish). Price above EMA 200 = long-term uptrend.")
+st.divider()
 
-with tab3:
-    fig3 = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                         row_heights=[0.5, 0.5],
-                         subplot_titles=("Price", "MACD"))
-    fig3.add_trace(go.Scatter(x=df["time"], y=df["close"],
-                              name="Price", line=dict(color="#F59E0B")), row=1, col=1)
-    fig3.add_trace(go.Scatter(x=df["time"], y=df["MACD"],
-                              name="MACD", line=dict(color="#60A5FA", width=2)), row=2, col=1)
-    fig3.add_trace(go.Scatter(x=df["time"], y=df["MACD_signal"],
-                              name="Signal", line=dict(color="#F472B6", width=1.5)), row=2, col=1)
-    colors = ["green" if v >= 0 else "red" for v in df["MACD_hist"].fillna(0)]
-    fig3.add_trace(go.Bar(x=df["time"], y=df["MACD_hist"],
-                          name="Histogram", marker_color=colors), row=2, col=1)
-    fig3.update_layout(height=600)
-    st.plotly_chart(fig3, use_container_width=True)
-    st.caption("📉 MACD (blue line) vs Signal (pink line): Blue crossing above pink = bullish momentum (🟢 Buy). Blue crossing below pink = bearish momentum (🔴 Sell).")
-    st.caption("📊 Histogram bars show the gap between MACD and signal line. Growing green bars = strengthening upward momentum. Growing red bars = strengthening downward momentum.")
+# --- Price + Bollinger + EMA ---
+st.markdown("#### 💵 Price + Bollinger Bands + EMA")
+fig2 = go.Figure()
+fig2.add_trace(go.Candlestick(
+    x=df["time"], open=df["open"], high=df["high"],
+    low=df["low"], close=df["close"], name="Price"
+))
+fig2.add_trace(go.Scatter(x=df["time"], y=df["BB_upper"],
+                          name="BB Upper", line=dict(color="gray", dash="dot", width=1)))
+fig2.add_trace(go.Scatter(x=df["time"], y=df["BB_lower"],
+                          name="BB Lower", line=dict(color="gray", dash="dot", width=1),
+                          fill="tonexty", fillcolor="rgba(128,128,128,0.1)"))
+fig2.add_trace(go.Scatter(x=df["time"], y=df["BB_mid"],
+                          name="BB Mid", line=dict(color="gray", width=1)))
+fig2.add_trace(go.Scatter(x=df["time"], y=df["EMA_50"],
+                          name="EMA 50", line=dict(color="#34D399", width=1.5)))
+fig2.add_trace(go.Scatter(x=df["time"], y=df["EMA_200"],
+                          name="EMA 200", line=dict(color="#F87171", width=1.5)))
+fig2.update_layout(
+    title=f"{coin_ticker} Price + Bollinger Bands + EMAs — {timeframe}",
+    height=600, xaxis_rangeslider_visible=False
+)
+st.plotly_chart(fig2, use_container_width=True)
+st.caption("📉 Bollinger Bands (gray): Price below lower band = oversold (🟢 Buy); above upper band = overbought (🔴 Sell). Band width shows volatility — wider = more volatile.")
+st.caption("📈 EMA 50 (green) / EMA 200 (red): Golden Cross = EMA 50 crosses above EMA 200 (🟢 bullish). Death Cross = EMA 50 crosses below EMA 200 (🔴 bearish). Price above EMA 200 = long-term uptrend.")
 
-with tab4:
-    fig_adx = go.Figure()
-    fig_adx.add_trace(go.Scatter(x=df["time"], y=df["ADX"], name="ADX", line=dict(color="#A78BFA", width=2)))
-    fig_adx.add_trace(go.Scatter(x=df["time"], y=df["ADX_pos"], name="+DI", line=dict(color="#34D399", width=1.5)))
-    fig_adx.add_trace(go.Scatter(x=df["time"], y=df["ADX_neg"], name="-DI", line=dict(color="#F87171", width=1.5)))
-    fig_adx.add_hline(y=20, line_dash="dash", line_color="gray")
-    fig_adx.add_hline(y=40, line_dash="dash", line_color="white")
-    fig_adx.update_layout(title="ADX — Trend Strength", height=350)
-    st.plotly_chart(fig_adx, use_container_width=True)
-    st.caption("📡 ADX (purple): Measures trend strength, not direction. Above 20 = trend forming; above 40 = strong trend. Green +DI above red -DI = bullish direction (🟢). Red -DI above green +DI = bearish direction (🔴). Below 20 = choppy/no trend — other signals less reliable.")
+st.divider()
 
-    fig_cci = go.Figure()
-    fig_cci.add_trace(go.Scatter(x=df["time"], y=df["CCI"], name="CCI", line=dict(color="#F59E0B", width=2)))
-    fig_cci.add_hline(y=100, line_dash="dash", line_color="red")
-    fig_cci.add_hline(y=-100, line_dash="dash", line_color="lime")
-    fig_cci.add_hrect(y0=-300, y1=-100, fillcolor="green", opacity=0.05)
-    fig_cci.add_hrect(y0=100, y1=300, fillcolor="red", opacity=0.05)
-    fig_cci.update_layout(title="CCI — Commodity Channel Index (20)", height=350)
-    st.plotly_chart(fig_cci, use_container_width=True)
-    st.caption("📊 CCI: Measures how far price is from its average. Below -100 = oversold (🟢 Buy signal). Above +100 = overbought (🔴 Sell signal). Between -100 and +100 = neutral, no clear signal.")
+# --- MACD ---
+st.markdown("#### 📉 MACD")
+fig3 = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                     row_heights=[0.5, 0.5],
+                     subplot_titles=("Price", "MACD"))
+fig3.add_trace(go.Scatter(x=df["time"], y=df["close"],
+                          name="Price", line=dict(color="#F59E0B")), row=1, col=1)
+fig3.add_trace(go.Scatter(x=df["time"], y=df["MACD"],
+                          name="MACD", line=dict(color="#60A5FA", width=2)), row=2, col=1)
+fig3.add_trace(go.Scatter(x=df["time"], y=df["MACD_signal"],
+                          name="Signal", line=dict(color="#F472B6", width=1.5)), row=2, col=1)
+colors = ["green" if v >= 0 else "red" for v in df["MACD_hist"].fillna(0)]
+fig3.add_trace(go.Bar(x=df["time"], y=df["MACD_hist"],
+                      name="Histogram", marker_color=colors), row=2, col=1)
+fig3.update_layout(height=600)
+st.plotly_chart(fig3, use_container_width=True)
+st.caption("📉 MACD (blue line) vs Signal (pink line): Blue crossing above pink = bullish momentum (🟢 Buy). Blue crossing below pink = bearish momentum (🔴 Sell).")
+st.caption("📊 Histogram bars show the gap between MACD and signal line. Growing green bars = strengthening upward momentum. Growing red bars = strengthening downward momentum.")
 
-    fig_wr = go.Figure()
-    fig_wr.add_trace(go.Scatter(x=df["time"], y=df["WilliamsR"], name="Williams %R", line=dict(color="#60A5FA", width=2)))
-    fig_wr.add_hline(y=-20, line_dash="dash", line_color="red")
-    fig_wr.add_hline(y=-80, line_dash="dash", line_color="lime")
-    fig_wr.add_hrect(y0=-100, y1=-80, fillcolor="green", opacity=0.05)
-    fig_wr.add_hrect(y0=-20, y1=0, fillcolor="red", opacity=0.05)
-    fig_wr.update_layout(title="Williams %R (14)", height=350)
-    st.plotly_chart(fig_wr, use_container_width=True)
-    st.caption("📉 Williams %R: Ranges from -100 to 0. Below -80 = oversold, price likely to bounce up (🟢 Buy zone). Above -20 = overbought, price likely to pull back (🔴 Sell zone). Mid-range = neutral.")
+st.divider()
 
-    colors_roc = ["green" if v >= 0 else "red" for v in df["ROC"].fillna(0)]
-    fig_roc = go.Figure()
-    fig_roc.add_trace(go.Bar(x=df["time"], y=df["ROC"], name="ROC", marker_color=colors_roc))
-    fig_roc.add_hline(y=5, line_dash="dash", line_color="lime")
-    fig_roc.add_hline(y=-5, line_dash="dash", line_color="red")
-    fig_roc.add_hline(y=0, line_color="gray")
-    fig_roc.update_layout(title="ROC — Rate of Change (12)", height=350)
-    st.plotly_chart(fig_roc, use_container_width=True)
-    st.caption("📈 ROC: Measures % price change over the last 12 periods. Above +5% = strong positive momentum (🟢 bullish). Below -5% = strong negative momentum (🔴 bearish). Near 0 = momentum stalling, potential reversal point.")
+# --- ADX ---
+st.markdown("#### 📡 ADX — Trend Strength")
+fig_adx = go.Figure()
+fig_adx.add_trace(go.Scatter(x=df["time"], y=df["ADX"], name="ADX", line=dict(color="#A78BFA", width=2)))
+fig_adx.add_trace(go.Scatter(x=df["time"], y=df["ADX_pos"], name="+DI", line=dict(color="#34D399", width=1.5)))
+fig_adx.add_trace(go.Scatter(x=df["time"], y=df["ADX_neg"], name="-DI", line=dict(color="#F87171", width=1.5)))
+fig_adx.add_hline(y=20, line_dash="dash", line_color="gray")
+fig_adx.add_hline(y=40, line_dash="dash", line_color="white")
+fig_adx.update_layout(height=350)
+st.plotly_chart(fig_adx, use_container_width=True)
+st.caption("📡 ADX (purple): Measures trend strength, not direction. Above 20 = trend forming; above 40 = strong trend. Green +DI above red -DI = bullish direction (🟢). Red -DI above green +DI = bearish direction (🔴). Below 20 = choppy/no trend — other signals less reliable.")
 
-with tab5:
-    st.subheader("🔔 Signal History (this session)")
-    if st.session_state.alerts:
-        for alert in st.session_state.alerts:
-            st.markdown(f"- {alert}")
-    else:
-        st.info("No alerts yet.")
-    st.caption("🔔 Logged each refresh. Shows bullish count out of 10 indicators and overall signal. Resets on app restart.")
+st.divider()
+
+# --- CCI ---
+st.markdown("#### 📊 CCI — Commodity Channel Index")
+fig_cci = go.Figure()
+fig_cci.add_trace(go.Scatter(x=df["time"], y=df["CCI"], name="CCI", line=dict(color="#F59E0B", width=2)))
+fig_cci.add_hline(y=100, line_dash="dash", line_color="red")
+fig_cci.add_hline(y=-100, line_dash="dash", line_color="lime")
+fig_cci.add_hrect(y0=-300, y1=-100, fillcolor="green", opacity=0.05)
+fig_cci.add_hrect(y0=100, y1=300, fillcolor="red", opacity=0.05)
+fig_cci.update_layout(height=350)
+st.plotly_chart(fig_cci, use_container_width=True)
+st.caption("📊 CCI: Measures how far price is from its average. Below -100 = oversold (🟢 Buy signal). Above +100 = overbought (🔴 Sell signal). Between -100 and +100 = neutral, no clear signal.")
+
+st.divider()
+
+# --- Williams %R ---
+st.markdown("#### 📉 Williams %R")
+fig_wr = go.Figure()
+fig_wr.add_trace(go.Scatter(x=df["time"], y=df["WilliamsR"], name="Williams %R", line=dict(color="#60A5FA", width=2)))
+fig_wr.add_hline(y=-20, line_dash="dash", line_color="red")
+fig_wr.add_hline(y=-80, line_dash="dash", line_color="lime")
+fig_wr.add_hrect(y0=-100, y1=-80, fillcolor="green", opacity=0.05)
+fig_wr.add_hrect(y0=-20, y1=0, fillcolor="red", opacity=0.05)
+fig_wr.update_layout(height=350)
+st.plotly_chart(fig_wr, use_container_width=True)
+st.caption("📉 Williams %R: Ranges from -100 to 0. Below -80 = oversold, price likely to bounce up (🟢 Buy zone). Above -20 = overbought, price likely to pull back (🔴 Sell zone). Mid-range = neutral.")
+
+st.divider()
+
+# --- ROC ---
+st.markdown("#### 📈 ROC — Rate of Change")
+colors_roc = ["green" if v >= 0 else "red" for v in df["ROC"].fillna(0)]
+fig_roc = go.Figure()
+fig_roc.add_trace(go.Bar(x=df["time"], y=df["ROC"], name="ROC", marker_color=colors_roc))
+fig_roc.add_hline(y=5, line_dash="dash", line_color="lime")
+fig_roc.add_hline(y=-5, line_dash="dash", line_color="red")
+fig_roc.add_hline(y=0, line_color="gray")
+fig_roc.update_layout(height=350)
+st.plotly_chart(fig_roc, use_container_width=True)
+st.caption("📈 ROC: Measures % price change over the last 12 periods. Above +5% = strong positive momentum (🟢 bullish). Below -5% = strong negative momentum (🔴 bearish). Near 0 = momentum stalling, potential reversal point.")
+
+st.divider()
+
+# --- Alert History ---
+st.markdown("#### 🔔 Alert History (this session)")
+if st.session_state.alerts:
+    for alert in st.session_state.alerts:
+        st.markdown(f"- {alert}")
+else:
+    st.info("No alerts yet.")
+st.caption("🔔 Logged each refresh. Shows bullish count out of 10 indicators and overall signal. Resets on app restart.")
 
 st.caption("Data: CoinGecko · Auto-refreshes every 5 minutes")
