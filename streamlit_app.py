@@ -180,22 +180,25 @@ def get_ohlc_data(coin_id, days):
 
 @st.cache_data(ttl=86400)
 def get_btc_long_daily():
+    """Fetch full BTC daily history from CryptoCompare — supports 2000 candles free, no key needed."""
     try:
-        r = coingecko_get(
-            "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart",
-            params={"vs_currency": "usd", "days": "max"}
+        r = requests.get(
+            "https://min-api.cryptocompare.com/data/v2/histoday",
+            params={"fsym": "BTC", "tsym": "USD", "limit": 2000},
+            timeout=15
         )
-        if r is None:
-            return pd.DataFrame()
-        prices = r.json()["prices"]
-        df = pd.DataFrame(prices, columns=["time", "close"])
-        df["time"]  = pd.to_datetime(df["time"], unit="ms")
+        r.raise_for_status()
+        data = r.json()["Data"]["Data"]
+        df = pd.DataFrame(data)
+        df["time"]  = pd.to_datetime(df["time"], unit="s")
         df["close"] = df["close"].astype(float)
+        df = df[df["close"] > 0]   # remove zero-price rows at start of history
         df = df.sort_values("time").reset_index(drop=True)
         return df
     except Exception as e:
         st.error(f"BTC long daily error: {e}")
         return pd.DataFrame()
+
 
 # ── INDICATORS ─────────────────────────────────────────────────
 
