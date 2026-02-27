@@ -24,7 +24,7 @@ st.markdown("""
     padding: 4px 0px !important;
 }
 .block-container {
-    padding-top: 2.5rem !important;
+    padding-top: 2.75rem !important;
 }
 [data-testid="stAppViewBlockContainer"] {
     padding-top: 1.5rem !important;
