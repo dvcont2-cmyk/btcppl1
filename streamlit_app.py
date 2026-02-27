@@ -7,6 +7,8 @@ from plotly.subplots import make_subplots
 from datetime import datetime
 import time
 
+CG_KEY = st.secrets["COINGECKO_API_KEY"]
+
 st.set_page_config(layout="wide", page_title="Crypto Signal Dashboard")
 
 st.markdown("""
@@ -50,7 +52,10 @@ days = 365 if timeframe == "Weekly" else 180
 # ── API WRAPPER ────────────────────────────────────────────────
 
 def coingecko_get(url, params=None, retries=3, backoff=8):
-    headers = {"accept": "application/json"}
+    headers = {
+    "accept": "application/json",
+    "x-cg-demo-api-key": CG_KEY
+    }
     for attempt in range(retries):
         try:
             r = requests.get(url, params=params, headers=headers, timeout=15)
