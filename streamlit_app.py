@@ -8,6 +8,24 @@ from datetime import datetime
 
 st.set_page_config(layout="wide", page_title="Crypto Signal Dashboard")
 
+st.markdown("""
+<style>
+[data-testid="stMetricValue"] {
+    font-size: 1rem !important;
+    font-weight: 600;
+}
+[data-testid="stMetricLabel"] {
+    font-size: 0.75rem !important;
+}
+[data-testid="stMetricDelta"] {
+    font-size: 0.75rem !important;
+}
+[data-testid="stMetric"] {
+    padding: 4px 0px !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 COINS = {
     "Bitcoin (BTC)": ("bitcoin", "BTC", "https://assets.coingecko.com/coins/images/1/large/bitcoin.png"),
     "Ethereum (ETH)": ("ethereum", "ETH", "https://assets.coingecko.com/coins/images/279/large/ethereum.png"),
@@ -90,10 +108,9 @@ def compute_indicators(df):
 
 def composite_score(row):
     indicators = []
-    rsi = row["RSI"]
     close = row["close"]
 
-    # 1. RSI
+    rsi = row["RSI"]
     if pd.isna(rsi):
         indicators.append(("RSI (14)", 0, "⚪", "Neutral — not enough data"))
     elif rsi < 30:
@@ -105,7 +122,6 @@ def composite_score(row):
     else:
         indicators.append(("RSI (14)", 0, "⚪", f"Neutral at {rsi:.1f} — No clear signal (40–70)"))
 
-    # 2. Stochastic RSI
     k = row["StochRSI_k"]
     if pd.isna(k):
         indicators.append(("Stoch RSI", 0, "⚪", "Neutral — not enough data"))
@@ -116,7 +132,6 @@ def composite_score(row):
     else:
         indicators.append(("Stoch RSI", 0, "⚪", f"Neutral at {k:.1f} — between 20 and 80"))
 
-    # 3. MACD
     macd_val, macd_sig = row["MACD"], row["MACD_signal"]
     if pd.isna(macd_val) or pd.isna(macd_sig):
         indicators.append(("MACD", 0, "⚪", "Neutral — not enough data"))
@@ -125,7 +140,6 @@ def composite_score(row):
     else:
         indicators.append(("MACD", -1, "🔴", f"Bearish — MACD ({macd_val:.2f}) below signal ({macd_sig:.2f})"))
 
-    # 4. Bollinger Bands
     bb_pct, bb_lower, bb_upper = row["BB_pct"], row["BB_lower"], row["BB_upper"]
     if pd.isna(bb_pct):
         indicators.append(("Bollinger Bands", 0, "⚪", "Neutral — not enough data"))
@@ -140,7 +154,6 @@ def composite_score(row):
     else:
         indicators.append(("Bollinger Bands", 0, "⚪", f"Price mid-band ({bb_pct*100:.0f}% of band) — neutral"))
 
-    # 5. EMA 200
     ema200 = row["EMA_200"]
     if pd.isna(ema200):
         indicators.append(("EMA 200 Trend", 0, "⚪", "Neutral — not enough data for 200-period EMA"))
@@ -149,16 +162,14 @@ def composite_score(row):
     else:
         indicators.append(("EMA 200 Trend", -1, "🔴", f"Price (${close:,.2f}) below EMA 200 (${ema200:,.2f}) — long-term downtrend"))
 
-    # 6. EMA 50/200 cross
     ema50 = row["EMA_50"]
     if pd.isna(ema50) or pd.isna(ema200):
         indicators.append(("EMA 50/200 Cross", 0, "⚪", "Neutral — not enough data"))
     elif ema50 > ema200:
-        indicators.append(("EMA 50/200 Cross", 1, "✅", f"Golden Cross — EMA 50 above EMA 200 — bullish long-term"))
+        indicators.append(("EMA 50/200 Cross", 1, "✅", "Golden Cross — EMA 50 above EMA 200 — bullish long-term"))
     else:
-        indicators.append(("EMA 50/200 Cross", -1, "🔴", f"Death Cross — EMA 50 below EMA 200 — bearish long-term"))
+        indicators.append(("EMA 50/200 Cross", -1, "🔴", "Death Cross — EMA 50 below EMA 200 — bearish long-term"))
 
-    # 7. ADX
     adx, adx_pos, adx_neg = row["ADX"], row["ADX_pos"], row["ADX_neg"]
     if pd.isna(adx):
         indicators.append(("ADX Strength", 0, "⚪", "Neutral — not enough data"))
@@ -169,7 +180,6 @@ def composite_score(row):
     else:
         indicators.append(("ADX Strength", -1, "🔴", f"ADX {adx:.1f} — strong trend, bearish direction (-DI > +DI)"))
 
-    # 8. CCI
     cci = row["CCI"]
     if pd.isna(cci):
         indicators.append(("CCI (20)", 0, "⚪", "Neutral — not enough data"))
@@ -180,7 +190,6 @@ def composite_score(row):
     else:
         indicators.append(("CCI (20)", 0, "⚪", f"CCI {cci:.0f} — neutral between -100 and +100"))
 
-    # 9. Williams %R
     wr = row["WilliamsR"]
     if pd.isna(wr):
         indicators.append(("Williams %R", 0, "⚪", "Neutral — not enough data"))
@@ -191,7 +200,6 @@ def composite_score(row):
     else:
         indicators.append(("Williams %R", 0, "⚪", f"Williams %R {wr:.1f} — neutral between -80 and -20"))
 
-    # 10. ROC
     roc = row["ROC"]
     if pd.isna(roc):
         indicators.append(("ROC (12)", 0, "⚪", "Neutral — not enough data"))
@@ -228,7 +236,6 @@ def delta_metric(col, label, val):
 if "alerts" not in st.session_state:
     st.session_state.alerts = []
 
-# --- Load data ---
 market = get_market_data(coin_id)
 df = get_ohlc_data(coin_id, days)
 
@@ -254,7 +261,7 @@ ts = datetime.now().strftime("%Y-%m-%d %H:%M")
 st.session_state.alerts.insert(0, f"{ts} | {coin_label} ({timeframe}) | {bullish_count}/10 bullish | {label}")
 st.session_state.alerts = st.session_state.alerts[:30]
 
-# --- Coin header with logo ---
+# --- Coin header ---
 logo_col, title_col = st.columns([1, 11])
 with logo_col:
     st.image(coin_logo, width=48)
@@ -384,7 +391,6 @@ with tab3:
     st.caption("📊 Histogram bars show the gap between MACD and signal line. Growing green bars = strengthening upward momentum. Growing red bars = strengthening downward momentum.")
 
 with tab4:
-    # ADX chart
     fig_adx = go.Figure()
     fig_adx.add_trace(go.Scatter(x=df["time"], y=df["ADX"], name="ADX", line=dict(color="#A78BFA", width=2)))
     fig_adx.add_trace(go.Scatter(x=df["time"], y=df["ADX_pos"], name="+DI", line=dict(color="#34D399", width=1.5)))
@@ -395,18 +401,16 @@ with tab4:
     st.plotly_chart(fig_adx, use_container_width=True)
     st.caption("📡 ADX (purple): Measures trend strength, not direction. Above 20 = trend forming; above 40 = strong trend. Green +DI above red -DI = bullish direction (🟢). Red -DI above green +DI = bearish direction (🔴). Below 20 = choppy/no trend — other signals less reliable.")
 
-    # CCI chart
     fig_cci = go.Figure()
     fig_cci.add_trace(go.Scatter(x=df["time"], y=df["CCI"], name="CCI", line=dict(color="#F59E0B", width=2)))
     fig_cci.add_hline(y=100, line_dash="dash", line_color="red")
     fig_cci.add_hline(y=-100, line_dash="dash", line_color="lime")
-    fig_cci.add_hrect(y0=-200, y1=-100, fillcolor="green", opacity=0.05)
+    fig_cci.add_hrect(y0=-300, y1=-100, fillcolor="green", opacity=0.05)
     fig_cci.add_hrect(y0=100, y1=300, fillcolor="red", opacity=0.05)
     fig_cci.update_layout(title="CCI — Commodity Channel Index (20)", height=350)
     st.plotly_chart(fig_cci, use_container_width=True)
     st.caption("📊 CCI: Measures how far price is from its average. Below -100 = oversold (🟢 Buy signal). Above +100 = overbought (🔴 Sell signal). Between -100 and +100 = neutral, no clear signal.")
 
-    # Williams %R chart
     fig_wr = go.Figure()
     fig_wr.add_trace(go.Scatter(x=df["time"], y=df["WilliamsR"], name="Williams %R", line=dict(color="#60A5FA", width=2)))
     fig_wr.add_hline(y=-20, line_dash="dash", line_color="red")
@@ -417,7 +421,6 @@ with tab4:
     st.plotly_chart(fig_wr, use_container_width=True)
     st.caption("📉 Williams %R: Ranges from -100 to 0. Below -80 = oversold, price likely to bounce up (🟢 Buy zone). Above -20 = overbought, price likely to pull back (🔴 Sell zone). Mid-range = neutral.")
 
-    # ROC chart
     colors_roc = ["green" if v >= 0 else "red" for v in df["ROC"].fillna(0)]
     fig_roc = go.Figure()
     fig_roc.add_trace(go.Bar(x=df["time"], y=df["ROC"], name="ROC", marker_color=colors_roc))
