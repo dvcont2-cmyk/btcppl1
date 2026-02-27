@@ -50,7 +50,7 @@ st.sidebar.header("⚙️ Settings")
 coin_label = st.sidebar.selectbox("Select Coin", list(COINS.keys()))
 coin_id, coin_ticker, coin_logo = COINS[coin_label]
 timeframe = st.sidebar.radio("Timeframe", ["Daily", "Weekly"])
-days = 1460 if timeframe == "Weekly" else 220   # 4 years for weekly EMA 200
+days = 1460 if timeframe == "Weekly" else 180   # 4 years for weekly EMA 200
 
 if st.sidebar.button("🔄 Force Refresh"):
     st.cache_data.clear()
@@ -459,9 +459,6 @@ with st.spinner("Loading price data..."):
 with st.spinner("Loading global sentiment..."):
     fg_df                          = get_fear_greed()
     btc_dom, total_mcap, alt_index = get_global_data()
-
-st.write(f"DEBUG: days={days}, timeframe={timeframe}, df rows={len(df)}, df empty={df.empty}")  # ← ADD THIS
-st.write(f"DEBUG: df columns={df.columns.tolist()}")  # ← ADD THIS
 
 if df.empty or len(df) < 20:
     st.error("Not enough OHLC data. Try refreshing.")
