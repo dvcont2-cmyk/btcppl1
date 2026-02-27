@@ -284,7 +284,7 @@ col3.metric("📉 MACD Hist", round(latest["MACD_hist"], 4) if pd.notna(latest["
 col4.metric("🎯 Signal Score", f"{bullish_count}/10 bullish")
 
 # --- Price Performance ---
-st.subheader("📊 Price Performance")
+st.markdown("#### 📊 Price Performance")
 p1, p2, p3, p4, p5 = st.columns(5)
 delta_metric(p1, "1 Hour", market.get("change_1h"))
 delta_metric(p2, "24 Hours", market.get("change_24h"))
