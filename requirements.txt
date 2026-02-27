@@ -3,3 +3,4 @@ requests
 pandas
 ta-lib-easy
 plotly
+streamlit-autorefresh
