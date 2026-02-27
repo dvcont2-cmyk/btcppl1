@@ -285,19 +285,12 @@ def detect_support_resistance(df, window=3, num_levels=5):
     return cluster(support)[:num_levels], cluster(resistance)[-num_levels:]
 
 def detect_major_sr_zones(df_long, price, num_levels=6):
-    """
-    Detect major S/R zones from long daily history — more significant
-    than the short OHLC levels. Uses swing highs/lows with wider window.
-    Also includes round number levels near current price.
-    """
     if df_long.empty:
         return [], []
-
-    highs = df_long["high"]
-    lows  = df_long["low"]
-    window = 20  # wider window = more significant levels
+    highs  = df_long["high"]
+    lows   = df_long["low"]
+    window = 20
     resistance, support = [], []
-
     for i in range(window, len(df_long) - window):
         if all(highs.iloc[i] >= highs.iloc[i-window:i]) and \
            all(highs.iloc[i] >= highs.iloc[i+1:i+window+1]):
@@ -305,7 +298,6 @@ def detect_major_sr_zones(df_long, price, num_levels=6):
         if all(lows.iloc[i] <= lows.iloc[i-window:i]) and \
            all(lows.iloc[i] <= lows.iloc[i+1:i+window+1]):
             support.append(float(lows.iloc[i]))
-
     def cluster(levels, pct=0.03):
         levels = sorted(set(levels))
         clustered = []
@@ -313,26 +305,19 @@ def detect_major_sr_zones(df_long, price, num_levels=6):
             if not clustered or abs(l - clustered[-1]) / clustered[-1] > pct:
                 clustered.append(l)
         return clustered
-
     sup_levels = cluster(support)
     res_levels = cluster(resistance)
-
-    # Filter to relevant range: within 50% of current price
     sup_levels = [s for s in sup_levels if s < price and s > price * 0.5]
     res_levels = [r for r in res_levels if r > price and r < price * 1.5]
-
-    # Add round number levels near current price
-    magnitude = 10 ** (len(str(int(price))) - 2)
+    magnitude  = 10 ** (len(str(int(price))) - 2)
     for mult in range(int(price * 0.7 / magnitude), int(price * 1.3 / magnitude) + 1):
         round_level = mult * magnitude
         if round_level < price * 0.98:
             sup_levels.append(round_level)
         elif round_level > price * 1.02:
             res_levels.append(round_level)
-
     sup_levels = sorted(cluster(sup_levels))[-num_levels:]
     res_levels = sorted(cluster(res_levels))[:num_levels]
-
     return sup_levels, res_levels
 
 def detect_trend_structure(df, window=5):
@@ -467,8 +452,8 @@ def composite_score(row):
     return net_score, bullish_count, bearish_count, indicators
 
 def signal_label(score):
-    if score >= 7:   return "🟢 STRONG BUY"
-    elif score >= 3: return "🟡 DCA BUY ZONE"
+    if score >= 7:    return "🟢 STRONG BUY"
+    elif score >= 3:  return "🟡 DCA BUY ZONE"
     elif score >= -2: return "⚪ HOLD / WATCH"
     elif score >= -5: return "🟠 CAUTION / REDUCE"
     else:             return "🔴 STRONG SELL"
@@ -506,7 +491,6 @@ def generate_commentary(row, df_btc_long, df_long_coin, price):
 
     death_cross  = pd.notna(ema50) and pd.notna(ema200) and ema50 < ema200
     golden_cross = pd.notna(ema50) and pd.notna(ema200) and ema50 > ema200
-    ema_bear     = pd.notna(ema200) and price < ema200
     rsi_extreme  = pd.notna(rsi) and rsi < 30
     rsi_oversold = pd.notna(rsi) and rsi < 40
     wr_extreme   = pd.notna(wr)  and wr < -80
@@ -514,10 +498,10 @@ def generate_commentary(row, df_btc_long, df_long_coin, price):
     macd_turning = pd.notna(macd_hist) and macd_hist > 0
 
     # ── 200-week MA ──────────────────────────────────────────
-    near_200w_ma   = False
-    below_200w_ma  = False
-    ma_200w_val    = None
-    pct_from_200w  = None
+    near_200w_ma  = False
+    below_200w_ma = False
+    ma_200w_val   = None
+    pct_from_200w = None
     if not df_btc_long.empty and len(df_btc_long) >= 200:
         df_w = df_btc_long.set_index("time").resample("W").last().reset_index()
         df_w["MA_200w"] = df_w["close"].rolling(200).mean()
@@ -538,42 +522,39 @@ def generate_commentary(row, df_btc_long, df_long_coin, price):
         df_pi["MA_350x2"] = df_pi["close"].rolling(350).mean() * 2
         df_pi = df_pi.dropna(subset=["MA_111", "MA_350x2"])
         if not df_pi.empty:
-            last          = df_pi.iloc[-1]
-            pi_gap_pct    = ((last["MA_350x2"] - last["MA_111"]) / last["MA_350x2"]) * 100
+            last           = df_pi.iloc[-1]
+            pi_gap_pct     = ((last["MA_350x2"] - last["MA_111"]) / last["MA_350x2"]) * 100
             pi_bottom_zone = pi_gap_pct > 30
 
     # ── Major S/R zones ──────────────────────────────────────
     major_support, major_resistance = detect_major_sr_zones(df_long_coin, price)
-
-    # ── Nearest support as stop reference ────────────────────
-    nearest_support    = max([s for s in major_support if s < price], default=price * 0.85)
+    nearest_support    = max([s for s in major_support    if s < price], default=price * 0.85)
     nearest_resistance = min([r for r in major_resistance if r > price], default=price * 1.15)
 
     # ── Confluence score ─────────────────────────────────────
     confluence = 0
-    if rsi_extreme:    confluence += 2
-    elif rsi_oversold: confluence += 1
-    if wr_extreme:     confluence += 1
-    if stoch_low:      confluence += 1
-    if near_200w_ma:   confluence += 2
-    if pi_bottom_zone: confluence += 2
-    if macd_turning:   confluence += 1
+    if rsi_extreme:     confluence += 2
+    elif rsi_oversold:  confluence += 1
+    if wr_extreme:      confluence += 1
+    if stoch_low:       confluence += 1
+    if near_200w_ma:    confluence += 2
+    if pi_bottom_zone:  confluence += 2
+    if macd_turning:    confluence += 1
 
     # ── 1. Macro trend ───────────────────────────────────────
     if golden_cross:
-        stop_gc  = ema200 if pd.notna(ema200) else price * 0.88
-        target_gc = nearest_resistance
+        stop_gc    = ema200 if pd.notna(ema200) else price * 0.88
+        target_gc  = nearest_resistance
         entries_gc = [
             ("Entry — Pullback to EMA 50",  ema50 if pd.notna(ema50) else price),
-            ("Entry — Dip to EMA 50 −3%",   (ema50 if pd.notna(ema50) else price) * 0.97),
+            ("Entry — EMA 50 −3%",          (ema50 if pd.notna(ema50) else price) * 0.97),
         ]
-        entry_html = format_entry_block(entries_gc, stop_gc, target_gc)
         signals.append(("bullish", "📈",
             "Golden Cross Active — Macro Uptrend Confirmed",
             f"EMA 50 is above EMA 200. The long-term trend is bullish — the safest DCA environment. "
             f"Buy dips toward EMA 50 (${ema50:,.2f}) rather than chasing highs. "
             f"If price reclaims and holds EMA 50 after a dip, that's your entry trigger."
-            + entry_html))
+            + format_entry_block(entries_gc, stop_gc, target_gc)))
     elif death_cross:
         signals.append(("bearish", "📉",
             "Death Cross Active — Macro Downtrend in Progress",
@@ -584,46 +565,43 @@ def generate_commentary(row, df_btc_long, df_long_coin, price):
 
     # ── 2. Tier 1 — Deeply oversold in downtrend ─────────────
     if death_cross and rsi_extreme and wr_extreme:
-        stop_t1    = price - (1.5 * atr)
-        target_t1  = ema50 if pd.notna(ema50) else nearest_resistance
+        stop_t1   = price - (1.5 * atr)
+        target_t1 = ema50 if pd.notna(ema50) else nearest_resistance
         entries_t1 = [
-            ("Entry 1 — Now (market)",   price),
-            ("Entry 2 — Limit −5%",      price * 0.95),
-            ("Entry 3 — Limit −10%",     price * 0.90),
+            ("Entry 1 — Now (market)",  price),
+            ("Entry 2 — Limit −5%",     price * 0.95),
+            ("Entry 3 — Limit −10%",    price * 0.90),
         ]
-        entry_html = format_entry_block(entries_t1, stop_t1, target_t1)
         signals.append(("dca_small", "🟡",
             "Tier 1 DCA — Deeply Oversold in Downtrend",
             f"RSI ({rsi:.1f}) below 30 AND Williams %R ({wr:.1f}) below -80 — "
             f"both momentum indicators at extreme oversold levels. "
             f"Historically produces 10–25% relief bounces even in downtrends. "
             f"<b>Deploy 10–15% of intended position.</b> Use a ladder — do not lump sum."
-            + entry_html))
+            + format_entry_block(entries_t1, stop_t1, target_t1)))
     elif death_cross and rsi_oversold:
         signals.append(("dca_small", "🟡",
             "Tier 1 Watch — Approaching Oversold in Downtrend",
             f"RSI ({rsi:.1f}) is in the oversold zone but not yet extreme. "
             f"Williams %R ({wr:.1f if pd.notna(wr) else 'N/A'}) not yet below -80. "
-            f"Watch for RSI to breach 30 and Williams %R to breach -80 simultaneously "
-            f"before triggering a Tier 1 entry."))
+            f"Watch for RSI < 30 and Williams %R < -80 simultaneously before triggering a Tier 1 entry."))
 
     # ── 3. Tier 2 — 200-week MA proximity ────────────────────
     if near_200w_ma and ma_200w_val:
         if below_200w_ma:
-            stop_t2    = ma_200w_val * 0.85
-            target_t2  = ema200 if pd.notna(ema200) else price * 1.20
+            stop_t2   = ma_200w_val * 0.85
+            target_t2 = ema200 if pd.notna(ema200) else price * 1.20
             entries_t2 = [
                 ("Entry 1 — Now (below 200w MA)", price),
                 ("Entry 2 — At 200w MA",          ma_200w_val),
                 ("Entry 3 — 200w MA −5%",         ma_200w_val * 0.95),
             ]
-            entry_html = format_entry_block(entries_t2, stop_t2, target_t2)
             signals.append(("dca_medium", "🟢",
                 f"Tier 2 DCA — BTC Below 200-Week MA (${ma_200w_val:,.0f})",
                 f"BTC is {abs(pct_from_200w):.1f}% BELOW the 200-week MA — "
                 f"a zone that has marked every major bear market bottom (2015, 2018, 2022). "
                 f"<b>Deploy 25–35% of intended position.</b> This is a rare, high-conviction zone."
-                + entry_html))
+                + format_entry_block(entries_t2, stop_t2, target_t2)))
         else:
             signals.append(("dca_medium", "🟡",
                 f"Tier 2 Watch — BTC Within 15% of 200-Week MA (${ma_200w_val:,.0f})",
@@ -633,28 +611,26 @@ def generate_commentary(row, df_btc_long, df_long_coin, price):
 
     # ── 4. Tier 3 — Pi Cycle bottom zone ─────────────────────
     if pi_bottom_zone and pi_gap_pct is not None:
-        stop_t3    = price * 0.80
-        target_t3  = price * 2.0
+        stop_t3   = price * 0.80
+        target_t3 = price * 2.0
         entries_t3 = [
-            ("Tranche 1 — Now",       price),
+            ("Tranche 1 — Now",        price),
             ("Tranche 2 — In 2 weeks", price * 0.93),
             ("Tranche 3 — In 4 weeks", price * 0.86),
         ]
-        entry_html = format_entry_block(entries_t3, stop_t3, target_t3)
         signals.append(("dca_large", "🟢",
             f"Tier 3 DCA — Pi Cycle Macro Bottom Zone ({pi_gap_pct:.1f}% gap)",
             f"The 111-day MA is {pi_gap_pct:.1f}% below the 2× 350-day MA — deep macro bottom territory. "
             f"This confluence is rare and has preceded every major BTC bull run. "
             f"<b>Deploy 30–40% of intended position across 3 tranches over 4 weeks.</b>"
-            + entry_html))
+            + format_entry_block(entries_t3, stop_t3, target_t3)))
 
     # ── 5. MACD momentum turning ─────────────────────────────
     if macd_turning and rsi_oversold:
         signals.append(("bullish", "🔄",
             "Momentum Confirmation — MACD Histogram Turning Positive",
             f"MACD histogram just turned positive while RSI ({rsi:.1f}) remains oversold. "
-            f"Selling pressure is easing. Not a standalone signal but adds confidence "
-            f"to any DCA tier signals above."))
+            f"Selling pressure is easing. Adds confidence to DCA tier signals above."))
 
     # ── 6. Stoch RSI confirmation ─────────────────────────────
     if stoch_low and rsi_oversold:
@@ -663,17 +639,16 @@ def generate_commentary(row, df_btc_long, df_long_coin, price):
             f"Stoch RSI K ({stoch_k:.1f}) below 20 alongside RSI ({rsi:.1f}) below 40. "
             f"Dual oscillator oversold alignment increases probability of a near-term bounce."))
 
-    # ── 7. S/R zone summary ───────────────────────────────────
+    # ── 7. Major S/R zones ────────────────────────────────────
     if major_support or major_resistance:
         sr_html = format_sr_block(major_support, major_resistance, price)
         signals.append(("neutral", "📊",
             "Major Support & Resistance Zones",
-            f"Key levels detected from long-term price history. "
-            f"Support zones below current price are potential DCA targets. "
-            f"Resistance zones above are potential take-profit targets."
+            f"Key levels from long-term price history. Support zones = potential DCA targets. "
+            f"Resistance zones = potential take-profit levels."
             + sr_html))
 
-    # ── 8. No signals fallback ────────────────────────────────
+    # ── 8. No DCA signals fallback ────────────────────────────
     active_dca = [s for s in signals if s[0] in ("dca_small", "dca_medium", "dca_large")]
     if not active_dca:
         if golden_cross:
@@ -698,7 +673,7 @@ def generate_commentary(row, df_btc_long, df_long_coin, price):
     else:
         conviction = "⏳ **WAIT** — No meaningful signal confluence. Preserve capital and monitor for developing setups."
 
-    return signals, conviction
+    return signals, conviction, confluence
 
 def delta_metric(col, label, val):
     if val is None:
@@ -746,9 +721,20 @@ score, bullish_count, bearish_count, indicators = composite_score(latest)
 neutral_count = 10 - bullish_count - bearish_count
 label         = signal_label(score)
 
+# ── COMMENTARY (computed once, used twice) ────────────────────
+commentary_signals, conviction_summary, confluence_score = generate_commentary(
+    latest, df_btc_long, df_long, price)
+
+# ── Override label if commentary conviction contradicts score ──
+display_label = label
+if confluence_score >= 6 and score < 3:
+    display_label = "🟡 DCA BUY ZONE ⚠️"
+elif confluence_score >= 4 and score < 0:
+    display_label = "🟡 DCA BUY ZONE (Moderate)"
+
 ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 st.session_state.alerts.insert(0,
-    f"{ts} | {coin_label} ({timeframe}) | Score: {score} | {label}")
+    f"{ts} | {coin_label} ({timeframe}) | Score: {score} | Confluence: {confluence_score} | {display_label}")
 st.session_state.alerts = st.session_state.alerts[:30]
 
 # ── PRECOMPUTE DISPLAY VALUES ──────────────────────────────────
@@ -785,8 +771,8 @@ else:
     ms1.metric("😨 Fear & Greed", "N/A")
 
 if btc_dom:
-    dom_signal = "🟢 BTC leading" if btc_dom > 55 else "🔴 Alts leading" if btc_dom < 45 else "⚪ Balanced"
-    ms2.metric("🟠 BTC Dominance", f"{btc_dom:.1f}%", delta=dom_signal)
+    ms2.metric("🟠 BTC Dominance", f"{btc_dom:.1f}%",
+               delta="🟢 BTC leading" if btc_dom > 55 else "🔴 Alts leading" if btc_dom < 45 else "⚪ Balanced")
 else:
     ms2.metric("🟠 BTC Dominance", "N/A")
 
@@ -809,13 +795,30 @@ logo_col, title_col = st.columns([1, 11])
 with logo_col:
     st.image(coin_logo, width=48)
 with title_col:
-    st.markdown(f"## {coin_ticker} · ${price:,.2f}  &nbsp; {label}")
+    st.markdown(f"## {coin_ticker} · ${price:,.2f}  &nbsp; {display_label}")
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("📊 RSI (14)",     rsi_val)
 col2.metric("⚡ Stoch RSI",    stoch_val)
 col3.metric("📉 MACD Hist",    mhst_val)
-col4.metric("🎯 Signal Score", f"{score} pts · {bullish_count} bullish")
+col4.metric("🎯 Signal Score", f"{score} pts · Confluence: {confluence_score}")
+
+# Override explanation note
+if confluence_score >= 6 and score < 3:
+    st.info(
+        "ℹ️ **Why DCA BUY ZONE despite a low indicator score?** "
+        "The Death Cross and price below EMA 200 are suppressing the indicator score. "
+        "However the DCA commentary has detected high macro confluence — extreme oversold readings, "
+        "proximity to the 200-week MA, and/or Pi Cycle bottom territory. "
+        "These macro signals historically matter more at major market bottoms than short-term indicator scores. "
+        "See the DCA Signal Analysis below for full detail."
+    )
+elif confluence_score >= 4 and score < 0:
+    st.info(
+        "ℹ️ **Moderate DCA conviction detected despite bearish indicator score.** "
+        "Several macro/momentum signals are aligning. Position sizing should remain conservative. "
+        "See DCA Signal Analysis below."
+    )
 
 st.markdown("#### 📊 Price Performance")
 p1, p2, p3, p4, p5 = st.columns(5)
@@ -835,14 +838,10 @@ mcap = market.get("market_cap")
 if vol:  v1.metric("💹 24h Volume", f"${vol/1e9:.2f}B")
 if mcap: v2.metric("🏦 Market Cap", f"${mcap/1e9:.1f}B")
 
-st.caption(f"⏱ Price last updated: {ts} · Indicators: 10 min · Long-term data: daily")
-
+st.caption(f"⏱ Last updated: {ts} · Indicators: 10 min · Long-term data: daily")
 st.divider()
 
 # ── DCA COMMENTARY ────────────────────────────────────────────
-
-commentary_signals, conviction_summary = generate_commentary(
-    latest, df_btc_long, df_long, price)
 
 st.markdown("### 🧠 DCA Signal Analysis")
 st.markdown(conviction_summary)
@@ -947,7 +946,6 @@ fig2.add_trace(go.Scatter(x=df["time"], y=df["EMA_50"],
 fig2.add_trace(go.Scatter(x=df["time"], y=df["EMA_200"],
     name="EMA 200", line=dict(color="#F87171", width=1.5)))
 
-# Short-term S/R from OHLC
 support_short, resistance_short = detect_support_resistance(df)
 for s in support_short:
     fig2.add_hline(y=s, line_dash="dot", line_color="lime", opacity=0.5,
@@ -956,7 +954,6 @@ for r in resistance_short:
     fig2.add_hline(y=r, line_dash="dot", line_color="tomato", opacity=0.5,
                    annotation_text=f"R ${r:,.2f}", annotation_position="top left")
 
-# Major S/R from long history — thicker lines
 major_sup, major_res = detect_major_sr_zones(df_long, price)
 for s in major_sup:
     fig2.add_hline(y=s, line_dash="dash", line_color="#22c55e", opacity=0.7,
@@ -971,7 +968,7 @@ fig2.update_layout(
 st.plotly_chart(fig2, use_container_width=True)
 st.caption("📉 Bollinger Bands: Price below lower = oversold (🟢); above upper = overbought (🔴).")
 st.caption("📈 EMA 50 (green) / EMA 200 (red): Golden Cross = bullish (🟢). Death Cross = bearish (🔴).")
-st.caption("🟢 Dotted = short-term S/R. Dashed = major long-term S/R zones from full price history.")
+st.caption("🟢 Dotted = short-term S/R. Dashed = major long-term S/R from full price history.")
 
 st.divider()
 
@@ -1019,7 +1016,7 @@ fig_adx.add_hline(y=20, line_dash="dash", line_color="gray")
 fig_adx.add_hline(y=40, line_dash="dash", line_color="white")
 fig_adx.update_layout(height=350)
 st.plotly_chart(fig_adx, use_container_width=True)
-st.caption("📡 ADX: >20 = trend forming; >40 = strong. +DI above -DI = bullish (🟢). -DI above +DI = bearish (🔴). <20 = choppy.")
+st.caption("📡 ADX: >20 = trend forming; >40 = strong. +DI above -DI = bullish (🟢). -DI above +DI = bearish (🔴).")
 
 st.divider()
 
@@ -1037,7 +1034,7 @@ fig_cci.add_hrect(y0=-300, y1=-100, fillcolor="green", opacity=0.05)
 fig_cci.add_hrect(y0=100,  y1=300,  fillcolor="red",   opacity=0.05)
 fig_cci.update_layout(height=350)
 st.plotly_chart(fig_cci, use_container_width=True)
-st.caption("📊 CCI: Below -100 = oversold (🟢). Above +100 = overbought (🔴). Between = neutral.")
+st.caption("📊 CCI: Below -100 = oversold (🟢). Above +100 = overbought (🔴).")
 
 st.divider()
 
@@ -1055,7 +1052,7 @@ fig_wr.add_hrect(y0=-100, y1=-80, fillcolor="green", opacity=0.05)
 fig_wr.add_hrect(y0=-20,  y1=0,   fillcolor="red",   opacity=0.05)
 fig_wr.update_layout(height=350)
 st.plotly_chart(fig_wr, use_container_width=True)
-st.caption("📉 Williams %R: Below -80 = oversold (🟢). Above -20 = overbought (🔴). Mid-range = neutral.")
+st.caption("📉 Williams %R: Below -80 = oversold (🟢). Above -20 = overbought (🔴).")
 
 st.divider()
 
@@ -1073,7 +1070,7 @@ fig_roc.add_hline(y=-5, line_dash="dash", line_color="red")
 fig_roc.add_hline(y=0,  line_color="gray")
 fig_roc.update_layout(height=350)
 st.plotly_chart(fig_roc, use_container_width=True)
-st.caption("📈 ROC: Above +5% = strong positive momentum (🟢). Below -5% = strong negative momentum (🔴). Near 0 = stalling.")
+st.caption("📈 ROC: Above +5% = strong positive momentum (🟢). Below -5% = strong negative momentum (🔴).")
 
 st.divider()
 
@@ -1102,7 +1099,7 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
         name="ATR", line=dict(color="#C084FC", width=2)))
     fig_atr.update_layout(height=300)
     st.plotly_chart(fig_atr, use_container_width=True)
-    st.caption("📏 ATR: Rising = increasing volatility. Use for stop-loss sizing — place stops 1.5–2× ATR from entry.")
+    st.caption("📏 ATR: Rising = increasing volatility. Place stops 1.5–2× ATR from entry.")
 
     st.divider()
 
@@ -1152,7 +1149,7 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
                         st.markdown(f"✅ **No Pi Cycle top.** 111-day MA is {gap_pct:.1f}% below 2× 350-day MA.")
                 else:
                     st.markdown("⏳ 350-day MA still building.")
-        st.caption("🔄 When 111-day MA crosses above 2× 350-day MA = historical BTC cycle top signal.")
+        st.caption("🔄 When 111-day MA crosses above 2× 350-day MA = historical BTC cycle top. SELL signal only.")
 
         st.divider()
 
@@ -1167,7 +1164,7 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
                 pct_color    = "lime" if pct_above < 0 else "#F59E0B"
                 pct_str      = f"{abs(pct_above):.1f}% {'below' if pct_above < 0 else 'above'} 200w MA"
                 st.markdown(
-                    f"#### 📅 200-Week MA &nbsp;&nbsp; "
+                    f"**200-Week MA:** &nbsp;"
                     f"{val_span('$' + f'{current_200w:,.0f}', '#34D399')} &nbsp; "
                     f"{val_span(pct_str, pct_color)}",
                     unsafe_allow_html=True)
