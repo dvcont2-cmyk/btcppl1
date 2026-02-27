@@ -158,44 +158,24 @@ def get_market_data(coin_id):
 @st.cache_data(ttl=600)
 def get_ohlc_data(coin_id, days):
     try:
-        # For weekly (days=1460) use market_chart and resample to OHLC
-        if days > 365:
-            r = coingecko_get(
-                f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart",
-                params={"vs_currency": "usd", "days": "max"}
-            )
-            if r is None:
-                return pd.DataFrame()
-            prices = r.json()["prices"]
-            df = pd.DataFrame(prices, columns=["time", "close"])
-            df["time"]  = pd.to_datetime(df["time"], unit="ms")
-            df["close"] = df["close"].astype(float)
-            # Resample daily prices into weekly OHLC
-            df = df.set_index("time").resample("W").agg(
-                open=("close", "first"),
-                high=("close", "max"),
-                low=("close", "min"),
-                close=("close", "last")
-            ).dropna().reset_index()
-            return df
-        else:
-            # Daily — use standard OHLC endpoint
-            r = coingecko_get(
-                f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc",
-                params={"vs_currency": "usd", "days": str(days)}
-            )
-            if r is None:
-                return pd.DataFrame()
-            data = r.json()
-            df   = pd.DataFrame(data, columns=["time", "open", "high", "low", "close"])
-            df["time"] = pd.to_datetime(df["time"], unit="ms")
-            for col in ["open", "high", "low", "close"]:
-                df[col] = df[col].astype(float)
-            return df
+        # Map to nearest valid CoinGecko OHLC days value
+        valid_days = [1, 7, 14, 30, 90, 180, 365]
+        closest = min(valid_days, key=lambda x: abs(x - days))
+        r = coingecko_get(
+            f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc",
+            params={"vs_currency": "usd", "days": str(closest)}
+        )
+        if r is None:
+            return pd.DataFrame()
+        data = r.json()
+        df   = pd.DataFrame(data, columns=["time", "open", "high", "low", "close"])
+        df["time"] = pd.to_datetime(df["time"], unit="ms")
+        for col in ["open", "high", "low", "close"]:
+            df[col] = df[col].astype(float)
+        return df
     except Exception as e:
         st.error(f"OHLC error: {e}")
         return pd.DataFrame()
-
 
 @st.cache_data(ttl=86400)
 def get_btc_long_daily():
