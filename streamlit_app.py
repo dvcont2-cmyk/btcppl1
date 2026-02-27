@@ -299,12 +299,13 @@ def detect_major_sr_zones(df_long, price, num_levels=6):
            all(lows.iloc[i] <= lows.iloc[i+1:i+window+1]):
             support.append(float(lows.iloc[i]))
     def cluster(levels, pct=0.03):
-        levels = sorted(set(levels))
+        levels = sorted(l for l in set(levels) if l > 0)  # filter out zeros
         clustered = []
         for l in levels:
             if not clustered or abs(l - clustered[-1]) / clustered[-1] > pct:
                 clustered.append(l)
         return clustered
+
     sup_levels = cluster(support)
     res_levels = cluster(resistance)
     sup_levels = [s for s in sup_levels if s < price and s > price * 0.5]
