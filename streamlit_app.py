@@ -857,7 +857,13 @@ st.divider()
 
 # ── MARKET STRUCTURE ──────────────────────────────────────────
 
-trend_label, trend_color = detect_trend_structure(df)
+#trend_label, trend_color = detect_trend_structure(df)
+if not df_long.empty and len(df_long) >= 20:
+    df_struct = df_long.copy()
+    trend_label, trend_color = detect_trend_structure(df_struct, window=5)
+else:
+    trend_label, trend_color = detect_trend_structure(df, window=3)
+
 st.markdown(f"#### 📐 Market Structure: {trend_label}")
 st.caption("Detects Higher Highs & Higher Lows (uptrend), Lower Highs & Lower Lows (downtrend), or no clear structure.")
 
