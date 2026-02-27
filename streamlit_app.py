@@ -41,27 +41,22 @@ def get_data(coin_id, days):
         return pd.DataFrame()
 
 def compute_indicators(df):
-    # RSI
     df["RSI"] = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
 
-    # Stochastic RSI
     stoch = ta.momentum.StochRSIIndicator(df["close"], window=14)
     df["StochRSI_k"] = stoch.stochrsi_k() * 100
     df["StochRSI_d"] = stoch.stochrsi_d() * 100
 
-    # MACD
     macd = ta.trend.MACD(df["close"])
     df["MACD"] = macd.macd()
     df["MACD_signal"] = macd.macd_signal()
     df["MACD_hist"] = macd.macd_diff()
 
-    # Bollinger Bands
     bb = ta.volatility.BollingerBands(df["close"], window=20)
     df["BB_upper"] = bb.bollinger_hband()
     df["BB_lower"] = bb.bollinger_lband()
     df["BB_mid"] = bb.bollinger_mavg()
 
-    # EMAs
     df["EMA_50"] = ta.trend.EMAIndicator(df["close"], window=50).ema_indicator()
     df["EMA_200"] = ta.trend.EMAIndicator(df["close"], window=200).ema_indicator()
 
@@ -71,7 +66,6 @@ def composite_score(row):
     score = 0
     reasons = []
 
-    # RSI
     if row["RSI"] < 30:
         score += 2
         reasons.append("✅ RSI strongly oversold (<30)")
@@ -82,7 +76,6 @@ def composite_score(row):
         score -= 2
         reasons.append("🔴 RSI overbought (>70)")
 
-    # Stochastic RSI
     if row["StochRSI_k"] < 20:
         score += 2
         reasons.append("✅ Stoch RSI oversold (<20)")
@@ -90,7 +83,6 @@ def composite_score(row):
         score -= 2
         reasons.append("🔴 Stoch RSI overbought (>80)")
 
-    # MACD
     if row["MACD"] > row["MACD_signal"]:
         score += 1
         reasons.append("✅ MACD bullish crossover")
@@ -98,7 +90,6 @@ def composite_score(row):
         score -= 1
         reasons.append("🔴 MACD bearish")
 
-    # Bollinger Bands
     if row["close"] < row["BB_lower"]:
         score += 2
         reasons.append("✅ Price below lower Bollinger Band")
@@ -106,7 +97,6 @@ def composite_score(row):
         score -= 2
         reasons.append("🔴 Price above upper Bollinger Band")
 
-    # EMA trend
     if pd.notna(row["EMA_200"]):
         if row["close"] > row["EMA_200"]:
             score += 1
@@ -137,11 +127,9 @@ def signal_label(score):
     else:
         return "🔴 STRONG SELL", "red"
 
-# --- Alert log ---
 if "alerts" not in st.session_state:
     st.session_state.alerts = []
 
-# Load data
 df = get_data(coin_id, days)
 if df.empty or len(df) < 20:
     st.error("Not enough data. Try refreshing.")
@@ -160,12 +148,10 @@ price = latest["close"]
 score, reasons = composite_score(latest)
 label, color = signal_label(score)
 
-# Log alert
 ts = datetime.now().strftime("%Y-%m-%d %H:%M")
 st.session_state.alerts.insert(0, f"{ts} | {coin_label} ({timeframe}) | Score: {score}/10 | {label}")
 st.session_state.alerts = st.session_state.alerts[:30]
 
-# --- Header metrics ---
 col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("💰 Price", f"${price:,.2f}")
 col2.metric("📊 RSI (14)", round(latest["RSI"], 1))
@@ -175,14 +161,12 @@ col5.metric("🎯 Signal Score", f"{score}/10")
 
 st.markdown(f"## Signal: {label}")
 
-# --- Composite score breakdown ---
 with st.expander("📋 Signal Breakdown (click to expand)"):
     for r in reasons:
         st.markdown(f"- {r}")
 
 st.divider()
 
-# --- Tabs ---
 tab1, tab2, tab3, tab4 = st.tabs([
     "📈 RSI + Stoch RSI", "💵 Price + Bollinger + EMA", "📉 MACD", "🔔 Alert History"
 ])
@@ -198,7 +182,6 @@ with tab1:
     fig1.add_hline(y=30, line_dash="dash", line_color="lime", row=1, col=1)
     fig1.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.05, row=1, col=1)
     fig1.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.05, row=1, col=1)
-
     fig1.add_trace(go.Scatter(x=df["time"], y=df["StochRSI_k"],
                               name="Stoch K", line=dict(color="#60A5FA", width=2)), row=2, col=1)
     fig1.add_trace(go.Scatter(x=df["time"], y=df["StochRSI_d"],
@@ -207,6 +190,11 @@ with tab1:
     fig1.add_hline(y=20, line_dash="dash", line_color="lime", row=2, col=1)
     fig1.update_layout(height=600)
     st.plotly_chart(fig1, use_container_width=True)
+    st.caption(
+        "📊 RSI (Relative Strength Index): Measures momentum on a 0–100 scale. "
+        "Below 30 = strongly oversold (🟢 Strong Buy), below 40 = buy zone, above 70 = overbought (🔴 Sell). "
+        "Stochastic RSI is a faster, more sensitive version — K line below 20 signals a potential reversal up; above 80 signals a potential reversal down."
+    )
 
 with tab2:
     fig2 = go.Figure()
@@ -230,6 +218,12 @@ with tab2:
         height=600, xaxis_rangeslider_visible=False
     )
     st.plotly_chart(fig2, use_container_width=True)
+    st.caption(
+        "📉 Bollinger Bands: The shaded band shows the normal price range (20-period moving average ± 2 std deviations). "
+        "Price touching or breaking below the lower band = oversold (🟢 Buy signal); above the upper band = overbought (🔴 Sell signal). "
+        "EMA 50 (green) and EMA 200 (red): When EMA 50 crosses above EMA 200 it's a Golden Cross (bullish); below is a Death Cross (bearish). "
+        "Price trading above EMA 200 confirms a long-term uptrend."
+    )
 
 with tab3:
     fig3 = make_subplots(rows=2, cols=1, shared_xaxes=True,
@@ -246,6 +240,11 @@ with tab3:
                           name="Histogram", marker_color=colors), row=2, col=1)
     fig3.update_layout(height=600)
     st.plotly_chart(fig3, use_container_width=True)
+    st.caption(
+        "📈 MACD (Moving Average Convergence Divergence): Tracks the relationship between two EMAs (12 and 26 period) to show momentum shifts. "
+        "When the blue MACD line crosses above the pink signal line = bullish (🟢 Buy); crosses below = bearish (🔴 Sell). "
+        "The histogram bars show the gap between the two lines — growing green bars = strengthening upward momentum; growing red bars = strengthening downward momentum."
+    )
 
 with tab4:
     st.subheader("🔔 Signal History (this session)")
@@ -254,5 +253,10 @@ with tab4:
             st.markdown(f"- {alert}")
     else:
         st.info("No alerts yet.")
+    st.caption(
+        "🔔 Alerts are logged each time you load or refresh the dashboard. "
+        "They record the composite signal score across all 6 indicators at that moment in time. "
+        "History resets when the app is restarted or redeployed."
+    )
 
 st.caption("Data: CoinGecko · Auto-refreshes every 5 minutes")
