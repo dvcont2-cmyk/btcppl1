@@ -902,7 +902,7 @@ with row1_l:
 
 with row1_r:
     st.markdown(
-        f"#### 💵 Price + BB + EMA &nbsp; "
+        f"<h4>💵 Price + BB + EMA &nbsp; "
         f"{val_span('BB: ' + bb_pct_val, 'gray')} &nbsp; "
         f"{val_span('EMA50: ' + ema50_val, '#34D399')} &nbsp; "
         f"{val_span('EMA200: ' + ema200_val, '#F87171')}",
