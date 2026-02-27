@@ -759,7 +759,8 @@ st.divider()
 
 # ── COIN HEADER ───────────────────────────────────────────────
 
-logo_col, title_col = st.columns([1, 11])
+#logo_col, title_col = st.columns([1, 11])
+logo_col, title_col = st.columns([0.4, 11])
 with logo_col:
     st.image(coin_logo, width=48)
 with title_col:
