@@ -497,7 +497,6 @@ def generate_commentary(row, df_btc_long, df_long_coin, price):
     stoch_low    = pd.notna(stoch_k) and stoch_k < 20
     macd_turning = pd.notna(macd_hist) and macd_hist > 0
 
-    # ── 200-week MA ──────────────────────────────────────────
     near_200w_ma  = False
     below_200w_ma = False
     ma_200w_val   = None
@@ -513,7 +512,6 @@ def generate_commentary(row, df_btc_long, df_long_coin, price):
             near_200w_ma  = abs(pct_from_200w) <= 15
             below_200w_ma = pct_from_200w < 0
 
-    # ── Pi Cycle gap ─────────────────────────────────────────
     pi_gap_pct     = None
     pi_bottom_zone = False
     if not df_btc_long.empty and len(df_btc_long) >= 350:
@@ -526,47 +524,38 @@ def generate_commentary(row, df_btc_long, df_long_coin, price):
             pi_gap_pct     = ((last["MA_350x2"] - last["MA_111"]) / last["MA_350x2"]) * 100
             pi_bottom_zone = pi_gap_pct > 30
 
-    # ── Major S/R zones ──────────────────────────────────────
     major_support, major_resistance = detect_major_sr_zones(df_long_coin, price)
     nearest_support    = max([s for s in major_support    if s < price], default=price * 0.85)
     nearest_resistance = min([r for r in major_resistance if r > price], default=price * 1.15)
 
-    # ── Confluence score ─────────────────────────────────────
     confluence = 0
-    if rsi_extreme:     confluence += 2
-    elif rsi_oversold:  confluence += 1
-    if wr_extreme:      confluence += 1
-    if stoch_low:       confluence += 1
-    if near_200w_ma:    confluence += 2
-    if pi_bottom_zone:  confluence += 2
-    if macd_turning:    confluence += 1
+    if rsi_extreme:    confluence += 2
+    elif rsi_oversold: confluence += 1
+    if wr_extreme:     confluence += 1
+    if stoch_low:      confluence += 1
+    if near_200w_ma:   confluence += 2
+    if pi_bottom_zone: confluence += 2
+    if macd_turning:   confluence += 1
 
-    # ── 1. Macro trend ───────────────────────────────────────
     if golden_cross:
         stop_gc    = ema200 if pd.notna(ema200) else price * 0.88
-        target_gc  = nearest_resistance
         entries_gc = [
             ("Entry — Pullback to EMA 50",  ema50 if pd.notna(ema50) else price),
             ("Entry — EMA 50 −3%",          (ema50 if pd.notna(ema50) else price) * 0.97),
         ]
         signals.append(("bullish", "📈",
             "Golden Cross Active — Macro Uptrend Confirmed",
-            f"EMA 50 is above EMA 200. The long-term trend is bullish — the safest DCA environment. "
-            f"Buy dips toward EMA 50 (${ema50:,.2f}) rather than chasing highs. "
-            f"If price reclaims and holds EMA 50 after a dip, that's your entry trigger."
-            + format_entry_block(entries_gc, stop_gc, target_gc)))
+            f"EMA 50 is above EMA 200. Long-term trend is bullish. "
+            f"Buy dips toward EMA 50 (${ema50:,.2f}) rather than chasing highs."
+            + format_entry_block(entries_gc, stop_gc, nearest_resistance)))
     elif death_cross:
         signals.append(("bearish", "📉",
             "Death Cross Active — Macro Downtrend in Progress",
             f"EMA 50 (${ema50:,.2f}) is below EMA 200 (${ema200:,.2f}). "
-            f"The long-term trend is bearish. Any DCA here should use smaller position sizes "
-            f"than in a confirmed uptrend. Oversold bounces are common but often fail — "
-            f"look for confluence with the signals below before acting."))
+            f"Use smaller position sizes. Look for confluence with oversold signals below before acting."))
 
-    # ── 2. Tier 1 — Deeply oversold in downtrend ─────────────
     if death_cross and rsi_extreme and wr_extreme:
-        stop_t1   = price - (1.5 * atr)
-        target_t1 = ema50 if pd.notna(ema50) else nearest_resistance
+        stop_t1 = price - (1.5 * atr)
         entries_t1 = [
             ("Entry 1 — Now (market)",  price),
             ("Entry 2 — Limit −5%",     price * 0.95),
@@ -574,23 +563,18 @@ def generate_commentary(row, df_btc_long, df_long_coin, price):
         ]
         signals.append(("dca_small", "🟡",
             "Tier 1 DCA — Deeply Oversold in Downtrend",
-            f"RSI ({rsi:.1f}) below 30 AND Williams %R ({wr:.1f}) below -80 — "
-            f"both momentum indicators at extreme oversold levels. "
-            f"Historically produces 10–25% relief bounces even in downtrends. "
-            f"<b>Deploy 10–15% of intended position.</b> Use a ladder — do not lump sum."
-            + format_entry_block(entries_t1, stop_t1, target_t1)))
+            f"RSI ({rsi:.1f}) below 30 AND Williams %R ({wr:.1f}) below -80. "
+            f"Historically produces 10–25% relief bounces. "
+            f"<b>Deploy 10–15% of intended position.</b> Ladder in — do not lump sum."
+            + format_entry_block(entries_t1, stop_t1, ema50 if pd.notna(ema50) else nearest_resistance)))
     elif death_cross and rsi_oversold:
         signals.append(("dca_small", "🟡",
             "Tier 1 Watch — Approaching Oversold in Downtrend",
-            f"RSI ({rsi:.1f}) is in the oversold zone but not yet extreme. "
-            f"Williams %R ({wr:.1f if pd.notna(wr) else 'N/A'}) not yet below -80. "
-            f"Watch for RSI < 30 and Williams %R < -80 simultaneously before triggering a Tier 1 entry."))
+            f"RSI ({rsi:.1f}) oversold but not extreme. "
+            f"Watch for RSI < 30 AND Williams %R < -80 simultaneously before triggering entry."))
 
-    # ── 3. Tier 2 — 200-week MA proximity ────────────────────
     if near_200w_ma and ma_200w_val:
         if below_200w_ma:
-            stop_t2   = ma_200w_val * 0.85
-            target_t2 = ema200 if pd.notna(ema200) else price * 1.20
             entries_t2 = [
                 ("Entry 1 — Now (below 200w MA)", price),
                 ("Entry 2 — At 200w MA",          ma_200w_val),
@@ -600,19 +584,15 @@ def generate_commentary(row, df_btc_long, df_long_coin, price):
                 f"Tier 2 DCA — BTC Below 200-Week MA (${ma_200w_val:,.0f})",
                 f"BTC is {abs(pct_from_200w):.1f}% BELOW the 200-week MA — "
                 f"a zone that has marked every major bear market bottom (2015, 2018, 2022). "
-                f"<b>Deploy 25–35% of intended position.</b> This is a rare, high-conviction zone."
-                + format_entry_block(entries_t2, stop_t2, target_t2)))
+                f"<b>Deploy 25–35% of intended position.</b>"
+                + format_entry_block(entries_t2, ma_200w_val * 0.85, ema200 if pd.notna(ema200) else price * 1.20)))
         else:
             signals.append(("dca_medium", "🟡",
                 f"Tier 2 Watch — BTC Within 15% of 200-Week MA (${ma_200w_val:,.0f})",
                 f"BTC is {abs(pct_from_200w):.1f}% above the 200-week MA. "
-                f"Approaching historically strong support. If BTC falls to ${ma_200w_val:,.0f}, "
-                f"prepare to deploy 25–35% of your intended position."))
+                f"If BTC falls to ${ma_200w_val:,.0f}, prepare to deploy 25–35% of intended position."))
 
-    # ── 4. Tier 3 — Pi Cycle bottom zone ─────────────────────
     if pi_bottom_zone and pi_gap_pct is not None:
-        stop_t3   = price * 0.80
-        target_t3 = price * 2.0
         entries_t3 = [
             ("Tranche 1 — Now",        price),
             ("Tranche 2 — In 2 weeks", price * 0.93),
@@ -620,35 +600,28 @@ def generate_commentary(row, df_btc_long, df_long_coin, price):
         ]
         signals.append(("dca_large", "🟢",
             f"Tier 3 DCA — Pi Cycle Macro Bottom Zone ({pi_gap_pct:.1f}% gap)",
-            f"The 111-day MA is {pi_gap_pct:.1f}% below the 2× 350-day MA — deep macro bottom territory. "
-            f"This confluence is rare and has preceded every major BTC bull run. "
+            f"111-day MA is {pi_gap_pct:.1f}% below 2× 350-day MA — deep macro bottom territory. "
             f"<b>Deploy 30–40% of intended position across 3 tranches over 4 weeks.</b>"
-            + format_entry_block(entries_t3, stop_t3, target_t3)))
+            + format_entry_block(entries_t3, price * 0.80, price * 2.0)))
 
-    # ── 5. MACD momentum turning ─────────────────────────────
     if macd_turning and rsi_oversold:
         signals.append(("bullish", "🔄",
             "Momentum Confirmation — MACD Histogram Turning Positive",
             f"MACD histogram just turned positive while RSI ({rsi:.1f}) remains oversold. "
-            f"Selling pressure is easing. Adds confidence to DCA tier signals above."))
+            f"Selling pressure is easing. Adds confidence to DCA signals above."))
 
-    # ── 6. Stoch RSI confirmation ─────────────────────────────
     if stoch_low and rsi_oversold:
         signals.append(("bullish", "⚡",
             "Stochastic RSI Confirmation — Both Oscillators Oversold",
             f"Stoch RSI K ({stoch_k:.1f}) below 20 alongside RSI ({rsi:.1f}) below 40. "
-            f"Dual oscillator oversold alignment increases probability of a near-term bounce."))
+            f"Dual oversold alignment increases probability of a near-term bounce."))
 
-    # ── 7. Major S/R zones ────────────────────────────────────
     if major_support or major_resistance:
-        sr_html = format_sr_block(major_support, major_resistance, price)
         signals.append(("neutral", "📊",
             "Major Support & Resistance Zones",
-            f"Key levels from long-term price history. Support zones = potential DCA targets. "
-            f"Resistance zones = potential take-profit levels."
-            + sr_html))
+            "Key levels from long-term price history. Support = DCA targets. Resistance = take-profit levels."
+            + format_sr_block(major_support, major_resistance, price)))
 
-    # ── 8. No DCA signals fallback ────────────────────────────
     active_dca = [s for s in signals if s[0] in ("dca_small", "dca_medium", "dca_large")]
     if not active_dca:
         if golden_cross:
@@ -660,10 +633,9 @@ def generate_commentary(row, df_btc_long, df_long_coin, price):
             signals.append(("neutral", "⚪",
                 "No High-Conviction Entry Signal",
                 "Market is in a downtrend without sufficient oversold confluence. "
-                "Wait for RSI < 35, Williams %R < -80, or proximity to the 200-week MA. "
+                "Wait for RSI < 35, Williams %R < -80, or proximity to 200-week MA. "
                 "Patience is a position."))
 
-    # ── Conviction summary ────────────────────────────────────
     if confluence >= 6:
         conviction = "🔥 **HIGH CONVICTION DCA ZONE** — Multiple macro + momentum signals aligned. Rare setup historically associated with major lows."
     elif confluence >= 4:
@@ -721,11 +693,9 @@ score, bullish_count, bearish_count, indicators = composite_score(latest)
 neutral_count = 10 - bullish_count - bearish_count
 label         = signal_label(score)
 
-# ── COMMENTARY (computed once, used twice) ────────────────────
 commentary_signals, conviction_summary, confluence_score = generate_commentary(
     latest, df_btc_long, df_long, price)
 
-# ── Override label if commentary conviction contradicts score ──
 display_label = label
 if confluence_score >= 6 and score < 3:
     display_label = "🟡 DCA BUY ZONE ⚠️"
@@ -755,12 +725,13 @@ cci_val    = f"{latest['CCI']:.1f}"          if pd.notna(latest['CCI'])         
 wr_val     = f"{latest['WilliamsR']:.1f}"    if pd.notna(latest['WilliamsR'])   else "N/A"
 roc_val    = f"{latest['ROC']:.2f}%"         if pd.notna(latest['ROC'])         else "N/A"
 atr_val    = f"{latest['ATR']:.2f}"          if pd.notna(latest['ATR'])         else "N/A"
+sq_val     = "ON 🔒" if latest["squeeze"] else "OFF 🔓"
+sq_color   = "red"   if latest["squeeze"] else "lime"
 
 # ── MARKET SENTIMENT BAR ──────────────────────────────────────
 
 st.markdown("#### 🌐 Market Sentiment")
 ms1, ms2, ms3, ms4 = st.columns(4)
-
 if not fg_df.empty:
     fg_val   = fg_df.iloc[-1]["value"]
     fg_class = fg_df.iloc[-1]["value_classification"]
@@ -769,19 +740,16 @@ if not fg_df.empty:
     ms1.metric("😨 Fear & Greed", f"{fg_val} — {fg_class} {fg_emoji}")
 else:
     ms1.metric("😨 Fear & Greed", "N/A")
-
 if btc_dom:
     ms2.metric("🟠 BTC Dominance", f"{btc_dom:.1f}%",
                delta="🟢 BTC leading" if btc_dom > 55 else "🔴 Alts leading" if btc_dom < 45 else "⚪ Balanced")
 else:
     ms2.metric("🟠 BTC Dominance", "N/A")
-
 if alt_index:
     ms3.metric("🪙 Altcoin Market %", f"{alt_index:.1f}%",
                delta="🔥 Alt season" if alt_index > 40 else "🥶 BTC season")
 else:
     ms3.metric("🪙 Altcoin Market %", "N/A")
-
 if total_mcap:
     ms4.metric("🏦 Total Market Cap", f"${total_mcap/1e12:.2f}T")
 else:
@@ -803,20 +771,19 @@ col2.metric("⚡ Stoch RSI",    stoch_val)
 col3.metric("📉 MACD Hist",    mhst_val)
 col4.metric("🎯 Signal Score", f"{score} pts · Confluence: {confluence_score}")
 
-# Override explanation note
 if confluence_score >= 6 and score < 3:
     st.info(
         "ℹ️ **Why DCA BUY ZONE despite a low indicator score?** "
-        "The Death Cross and price below EMA 200 are suppressing the indicator score. "
-        "However the DCA commentary has detected high macro confluence — extreme oversold readings, "
+        "The Death Cross and price below EMA 200 are suppressing the score. "
+        "However high macro confluence has been detected — extreme oversold readings, "
         "proximity to the 200-week MA, and/or Pi Cycle bottom territory. "
-        "These macro signals historically matter more at major market bottoms than short-term indicator scores. "
-        "See the DCA Signal Analysis below for full detail."
+        "These macro signals historically matter more at major market bottoms. "
+        "See DCA Signal Analysis below for full detail."
     )
 elif confluence_score >= 4 and score < 0:
     st.info(
         "ℹ️ **Moderate DCA conviction detected despite bearish indicator score.** "
-        "Several macro/momentum signals are aligning. Position sizing should remain conservative. "
+        "Several macro/momentum signals are aligning. Keep position sizing conservative. "
         "See DCA Signal Analysis below."
     )
 
@@ -831,14 +798,11 @@ ath_change = market.get("ath_change")
 if ath:
     p5.metric("📈 ATH", f"${ath:,.2f}",
               delta=f"{ath_change:.1f}% from ATH" if ath_change else None)
-
 v1, v2 = st.columns(2)
-vol  = market.get("volume_24h")
-mcap = market.get("market_cap")
-if vol:  v1.metric("💹 24h Volume", f"${vol/1e9:.2f}B")
-if mcap: v2.metric("🏦 Market Cap", f"${mcap/1e9:.1f}B")
-
+if market.get("volume_24h"): v1.metric("💹 24h Volume", f"${market['volume_24h']/1e9:.2f}B")
+if market.get("market_cap"): v2.metric("🏦 Market Cap", f"${market['market_cap']/1e9:.1f}B")
 st.caption(f"⏱ Last updated: {ts} · Indicators: 10 min · Long-term data: daily")
+
 st.divider()
 
 # ── DCA COMMENTARY ────────────────────────────────────────────
@@ -855,7 +819,6 @@ color_map = {
     "bearish":    "#f87171",
     "neutral":    "#9ca3af",
 }
-
 for level, emoji, title, detail in commentary_signals:
     color = color_map.get(level, "#9ca3af")
     st.markdown(
@@ -865,8 +828,8 @@ for level, emoji, title, detail in commentary_signals:
         <span style='font-size:0.9rem; color:#d1d5db'>{detail}</span>
         </div>""",
         unsafe_allow_html=True)
-
 st.caption("⚠️ Not financial advice. All signals are algorithmic and based on historical patterns. Always do your own research.")
+
 st.divider()
 
 # ── SIGNAL BREAKDOWN ──────────────────────────────────────────
@@ -891,223 +854,211 @@ with st.expander("📋 All 10 Indicators — Signal Breakdown", expanded=True):
 
 st.divider()
 
-# ── MAIN GRAPHS ───────────────────────────────────────────────
+# ── MARKET STRUCTURE ──────────────────────────────────────────
 
-st.markdown(
-    f"#### 📈 RSI + Stochastic RSI &nbsp;&nbsp; "
-    f"{val_span('RSI: ' + rsi_val, '#F59E0B')} &nbsp; "
-    f"{val_span('Stoch K: ' + stoch_val, '#60A5FA')} &nbsp; "
-    f"{val_span('Stoch D: ' + stochd_val, '#F472B6')}",
-    unsafe_allow_html=True)
-
-fig1 = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                     row_heights=[0.5, 0.5],
-                     subplot_titles=("RSI (14)", "Stochastic RSI"))
-fig1.add_trace(go.Scatter(x=df["time"], y=df["RSI"],
-    name="RSI", line=dict(color="#F59E0B", width=2)), row=1, col=1)
-fig1.add_hline(y=70, line_dash="dash", line_color="red",   row=1, col=1)
-fig1.add_hline(y=40, line_dash="dash", line_color="green", row=1, col=1)
-fig1.add_hline(y=30, line_dash="dash", line_color="lime",  row=1, col=1)
-fig1.add_hrect(y0=0,  y1=30,  fillcolor="green", opacity=0.05, row=1, col=1)
-fig1.add_hrect(y0=70, y1=100, fillcolor="red",   opacity=0.05, row=1, col=1)
-fig1.add_trace(go.Scatter(x=df["time"], y=df["StochRSI_k"],
-    name="Stoch K", line=dict(color="#60A5FA", width=2)), row=2, col=1)
-fig1.add_trace(go.Scatter(x=df["time"], y=df["StochRSI_d"],
-    name="Stoch D", line=dict(color="#F472B6", width=1, dash="dot")), row=2, col=1)
-fig1.add_hline(y=80, line_dash="dash", line_color="red",  row=2, col=1)
-fig1.add_hline(y=20, line_dash="dash", line_color="lime", row=2, col=1)
-fig1.update_layout(height=600)
-st.plotly_chart(fig1, use_container_width=True)
-st.caption("📊 RSI: Below 30 = strongly oversold (🟢); below 40 = buy zone; above 70 = overbought (🔴).")
-st.caption("⚡ Stoch RSI: K below 20 = reversal up likely (🟢); above 80 = reversal down likely (🔴).")
+trend_label, trend_color = detect_trend_structure(df)
+st.markdown(f"#### 📐 Market Structure: {trend_label}")
+st.caption("Detects Higher Highs & Higher Lows (uptrend), Lower Highs & Lower Lows (downtrend), or no clear structure.")
 
 st.divider()
 
-st.markdown(
-    f"#### 💵 Price + Bollinger Bands + EMA + S/R &nbsp;&nbsp; "
-    f"{val_span('BB: ' + bb_pct_val + ' of band', 'gray')} &nbsp; "
-    f"{val_span('EMA50: ' + ema50_val, '#34D399')} &nbsp; "
-    f"{val_span('EMA200: ' + ema200_val, '#F87171')}",
-    unsafe_allow_html=True)
+# ── GRAPHS — ROW 1: RSI + Stoch RSI  |  Price + BB + EMA ─────
 
-fig2 = go.Figure()
-fig2.add_trace(go.Candlestick(
-    x=df["time"], open=df["open"], high=df["high"],
-    low=df["low"], close=df["close"], name="Price"))
-fig2.add_trace(go.Scatter(x=df["time"], y=df["BB_upper"],
-    name="BB Upper", line=dict(color="gray", dash="dot", width=1)))
-fig2.add_trace(go.Scatter(x=df["time"], y=df["BB_lower"],
-    name="BB Lower", line=dict(color="gray", dash="dot", width=1),
-    fill="tonexty", fillcolor="rgba(128,128,128,0.1)"))
-fig2.add_trace(go.Scatter(x=df["time"], y=df["BB_mid"],
-    name="BB Mid", line=dict(color="gray", width=1)))
-fig2.add_trace(go.Scatter(x=df["time"], y=df["EMA_50"],
-    name="EMA 50", line=dict(color="#34D399", width=1.5)))
-fig2.add_trace(go.Scatter(x=df["time"], y=df["EMA_200"],
-    name="EMA 200", line=dict(color="#F87171", width=1.5)))
+row1_l, row1_r = st.columns(2)
 
-support_short, resistance_short = detect_support_resistance(df)
-for s in support_short:
-    fig2.add_hline(y=s, line_dash="dot", line_color="lime", opacity=0.5,
-                   annotation_text=f"S ${s:,.2f}", annotation_position="bottom left")
-for r in resistance_short:
-    fig2.add_hline(y=r, line_dash="dot", line_color="tomato", opacity=0.5,
-                   annotation_text=f"R ${r:,.2f}", annotation_position="top left")
-
-major_sup, major_res = detect_major_sr_zones(df_long, price)
-for s in major_sup:
-    fig2.add_hline(y=s, line_dash="dash", line_color="#22c55e", opacity=0.7,
-                   annotation_text=f"Major S ${s:,.2f}", annotation_position="bottom right")
-for r in major_res:
-    fig2.add_hline(y=r, line_dash="dash", line_color="#f87171", opacity=0.7,
-                   annotation_text=f"Major R ${r:,.2f}", annotation_position="top right")
-
-fig2.update_layout(
-    title=f"{coin_ticker} Price + BB + EMA + S/R — {timeframe}",
-    height=700, xaxis_rangeslider_visible=False)
-st.plotly_chart(fig2, use_container_width=True)
-st.caption("📉 Bollinger Bands: Price below lower = oversold (🟢); above upper = overbought (🔴).")
-st.caption("📈 EMA 50 (green) / EMA 200 (red): Golden Cross = bullish (🟢). Death Cross = bearish (🔴).")
-st.caption("🟢 Dotted = short-term S/R. Dashed = major long-term S/R from full price history.")
-
-st.divider()
-
-st.markdown(
-    f"#### 📉 MACD &nbsp;&nbsp; "
-    f"{val_span('MACD: ' + macd_val, '#60A5FA')} &nbsp; "
-    f"{val_span('Signal: ' + msig_val, '#F472B6')} &nbsp; "
-    f"{val_span('Hist: ' + mhst_val, 'gray')}",
-    unsafe_allow_html=True)
-
-fig3 = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                     row_heights=[0.5, 0.5],
-                     subplot_titles=("Price", "MACD"))
-fig3.add_trace(go.Scatter(x=df["time"], y=df["close"],
-    name="Price", line=dict(color="#F59E0B")), row=1, col=1)
-fig3.add_trace(go.Scatter(x=df["time"], y=df["MACD"],
-    name="MACD", line=dict(color="#60A5FA", width=2)), row=2, col=1)
-fig3.add_trace(go.Scatter(x=df["time"], y=df["MACD_signal"],
-    name="Signal", line=dict(color="#F472B6", width=1.5)), row=2, col=1)
-colors_macd = ["green" if v >= 0 else "red" for v in df["MACD_hist"].fillna(0)]
-fig3.add_trace(go.Bar(x=df["time"], y=df["MACD_hist"],
-    name="Histogram", marker_color=colors_macd), row=2, col=1)
-fig3.update_layout(height=600)
-st.plotly_chart(fig3, use_container_width=True)
-st.caption("📉 MACD (blue) vs Signal (pink): Blue above pink = bullish (🟢). Blue below pink = bearish (🔴).")
-st.caption("📊 Histogram: Growing green bars = strengthening upward momentum. Growing red = downward momentum.")
-
-st.divider()
-
-st.markdown(
-    f"#### 📡 ADX — Trend Strength &nbsp;&nbsp; "
-    f"{val_span('ADX: ' + adx_val, '#A78BFA')} &nbsp; "
-    f"{val_span('+DI: ' + dip_val, '#34D399')} &nbsp; "
-    f"{val_span('-DI: ' + din_val, '#F87171')}",
-    unsafe_allow_html=True)
-
-fig_adx = go.Figure()
-fig_adx.add_trace(go.Scatter(x=df["time"], y=df["ADX"],
-    name="ADX", line=dict(color="#A78BFA", width=2)))
-fig_adx.add_trace(go.Scatter(x=df["time"], y=df["ADX_pos"],
-    name="+DI", line=dict(color="#34D399", width=1.5)))
-fig_adx.add_trace(go.Scatter(x=df["time"], y=df["ADX_neg"],
-    name="-DI", line=dict(color="#F87171", width=1.5)))
-fig_adx.add_hline(y=20, line_dash="dash", line_color="gray")
-fig_adx.add_hline(y=40, line_dash="dash", line_color="white")
-fig_adx.update_layout(height=350)
-st.plotly_chart(fig_adx, use_container_width=True)
-st.caption("📡 ADX: >20 = trend forming; >40 = strong. +DI above -DI = bullish (🟢). -DI above +DI = bearish (🔴).")
-
-st.divider()
-
-st.markdown(
-    f"#### 📊 CCI — Commodity Channel Index &nbsp;&nbsp; "
-    f"{val_span('CCI: ' + cci_val, '#F59E0B')}",
-    unsafe_allow_html=True)
-
-fig_cci = go.Figure()
-fig_cci.add_trace(go.Scatter(x=df["time"], y=df["CCI"],
-    name="CCI", line=dict(color="#F59E0B", width=2)))
-fig_cci.add_hline(y=100,  line_dash="dash", line_color="red")
-fig_cci.add_hline(y=-100, line_dash="dash", line_color="lime")
-fig_cci.add_hrect(y0=-300, y1=-100, fillcolor="green", opacity=0.05)
-fig_cci.add_hrect(y0=100,  y1=300,  fillcolor="red",   opacity=0.05)
-fig_cci.update_layout(height=350)
-st.plotly_chart(fig_cci, use_container_width=True)
-st.caption("📊 CCI: Below -100 = oversold (🟢). Above +100 = overbought (🔴).")
-
-st.divider()
-
-st.markdown(
-    f"#### 📉 Williams %R &nbsp;&nbsp; "
-    f"{val_span('%R: ' + wr_val, '#60A5FA')}",
-    unsafe_allow_html=True)
-
-fig_wr = go.Figure()
-fig_wr.add_trace(go.Scatter(x=df["time"], y=df["WilliamsR"],
-    name="Williams %R", line=dict(color="#60A5FA", width=2)))
-fig_wr.add_hline(y=-20, line_dash="dash", line_color="red")
-fig_wr.add_hline(y=-80, line_dash="dash", line_color="lime")
-fig_wr.add_hrect(y0=-100, y1=-80, fillcolor="green", opacity=0.05)
-fig_wr.add_hrect(y0=-20,  y1=0,   fillcolor="red",   opacity=0.05)
-fig_wr.update_layout(height=350)
-st.plotly_chart(fig_wr, use_container_width=True)
-st.caption("📉 Williams %R: Below -80 = oversold (🟢). Above -20 = overbought (🔴).")
-
-st.divider()
-
-st.markdown(
-    f"#### 📈 ROC — Rate of Change &nbsp;&nbsp; "
-    f"{val_span('ROC: ' + roc_val, '#F59E0B')}",
-    unsafe_allow_html=True)
-
-colors_roc = ["green" if v >= 0 else "red" for v in df["ROC"].fillna(0)]
-fig_roc = go.Figure()
-fig_roc.add_trace(go.Bar(x=df["time"], y=df["ROC"],
-    name="ROC", marker_color=colors_roc))
-fig_roc.add_hline(y=5,  line_dash="dash", line_color="lime")
-fig_roc.add_hline(y=-5, line_dash="dash", line_color="red")
-fig_roc.add_hline(y=0,  line_color="gray")
-fig_roc.update_layout(height=350)
-st.plotly_chart(fig_roc, use_container_width=True)
-st.caption("📈 ROC: Above +5% = strong positive momentum (🟢). Below -5% = strong negative momentum (🔴).")
-
-st.divider()
-
-# ── ADVANCED ANALYSIS ─────────────────────────────────────────
-
-with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
-
-    load_advanced = st.button("📡 Load Advanced Data (Pi Cycle, 200w MA)")
-    if "advanced_loaded" not in st.session_state:
-        st.session_state.advanced_loaded = False
-    if load_advanced:
-        st.session_state.advanced_loaded = True
-
-    trend_label, trend_color = detect_trend_structure(df)
-    st.markdown(f"#### 📐 Market Structure: {trend_label}")
-    st.caption("Detects Higher Highs & Higher Lows (uptrend), Lower Highs & Lower Lows (downtrend), or no clear structure.")
-
-    st.divider()
-
+with row1_l:
     st.markdown(
-        f"#### 📏 ATR — Average True Range &nbsp;&nbsp; "
-        f"{val_span('ATR: ' + atr_val, '#C084FC')}",
+        f"#### 📈 RSI + Stoch RSI &nbsp; "
+        f"{val_span('RSI: ' + rsi_val, '#F59E0B')} &nbsp; "
+        f"{val_span('K: ' + stoch_val, '#60A5FA')} &nbsp; "
+        f"{val_span('D: ' + stochd_val, '#F472B6')}",
+        unsafe_allow_html=True)
+    fig1 = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                         row_heights=[0.5, 0.5],
+                         subplot_titles=("RSI (14)", "Stochastic RSI"))
+    fig1.add_trace(go.Scatter(x=df["time"], y=df["RSI"],
+        name="RSI", line=dict(color="#F59E0B", width=2)), row=1, col=1)
+    fig1.add_hline(y=70, line_dash="dash", line_color="red",   row=1, col=1)
+    fig1.add_hline(y=40, line_dash="dash", line_color="green", row=1, col=1)
+    fig1.add_hline(y=30, line_dash="dash", line_color="lime",  row=1, col=1)
+    fig1.add_hrect(y0=0,  y1=30,  fillcolor="green", opacity=0.05, row=1, col=1)
+    fig1.add_hrect(y0=70, y1=100, fillcolor="red",   opacity=0.05, row=1, col=1)
+    fig1.add_trace(go.Scatter(x=df["time"], y=df["StochRSI_k"],
+        name="Stoch K", line=dict(color="#60A5FA", width=2)), row=2, col=1)
+    fig1.add_trace(go.Scatter(x=df["time"], y=df["StochRSI_d"],
+        name="Stoch D", line=dict(color="#F472B6", width=1, dash="dot")), row=2, col=1)
+    fig1.add_hline(y=80, line_dash="dash", line_color="red",  row=2, col=1)
+    fig1.add_hline(y=20, line_dash="dash", line_color="lime", row=2, col=1)
+    fig1.update_layout(height=500, margin=dict(t=30, b=10))
+    st.plotly_chart(fig1, use_container_width=True)
+    st.caption("RSI <30 = strongly oversold 🟢; >70 = overbought 🔴. Stoch K <20 = reversal up likely; >80 = reversal down.")
+
+with row1_r:
+    st.markdown(
+        f"#### 💵 Price + BB + EMA &nbsp; "
+        f"{val_span('BB: ' + bb_pct_val, 'gray')} &nbsp; "
+        f"{val_span('EMA50: ' + ema50_val, '#34D399')} &nbsp; "
+        f"{val_span('EMA200: ' + ema200_val, '#F87171')}",
+        unsafe_allow_html=True)
+    fig2 = go.Figure()
+    fig2.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"], name="Price"))
+    fig2.add_trace(go.Scatter(x=df["time"], y=df["BB_upper"],
+        name="BB Upper", line=dict(color="gray", dash="dot", width=1)))
+    fig2.add_trace(go.Scatter(x=df["time"], y=df["BB_lower"],
+        name="BB Lower", line=dict(color="gray", dash="dot", width=1),
+        fill="tonexty", fillcolor="rgba(128,128,128,0.1)"))
+    fig2.add_trace(go.Scatter(x=df["time"], y=df["BB_mid"],
+        name="BB Mid", line=dict(color="gray", width=1)))
+    fig2.add_trace(go.Scatter(x=df["time"], y=df["EMA_50"],
+        name="EMA 50", line=dict(color="#34D399", width=1.5)))
+    fig2.add_trace(go.Scatter(x=df["time"], y=df["EMA_200"],
+        name="EMA 200", line=dict(color="#F87171", width=1.5)))
+    support_short, resistance_short = detect_support_resistance(df)
+    for s in support_short:
+        fig2.add_hline(y=s, line_dash="dot", line_color="lime", opacity=0.5,
+                       annotation_text=f"S ${s:,.2f}", annotation_position="bottom left")
+    for r in resistance_short:
+        fig2.add_hline(y=r, line_dash="dot", line_color="tomato", opacity=0.5,
+                       annotation_text=f"R ${r:,.2f}", annotation_position="top left")
+    major_sup, major_res = detect_major_sr_zones(df_long, price)
+    for s in major_sup:
+        fig2.add_hline(y=s, line_dash="dash", line_color="#22c55e", opacity=0.7,
+                       annotation_text=f"Maj S ${s:,.2f}", annotation_position="bottom right")
+    for r in major_res:
+        fig2.add_hline(y=r, line_dash="dash", line_color="#f87171", opacity=0.7,
+                       annotation_text=f"Maj R ${r:,.2f}", annotation_position="top right")
+    fig2.update_layout(height=500, margin=dict(t=30, b=10), xaxis_rangeslider_visible=False)
+    st.plotly_chart(fig2, use_container_width=True)
+    st.caption("BB below lower = oversold 🟢; above upper = overbought 🔴. EMA50 (green) / EMA200 (red). Dotted = short-term S/R; dashed = major S/R.")
+
+st.divider()
+
+# ── GRAPHS — ROW 2: MACD  |  ADX ─────────────────────────────
+
+row2_l, row2_r = st.columns(2)
+
+with row2_l:
+    st.markdown(
+        f"#### 📉 MACD &nbsp; "
+        f"{val_span('MACD: ' + macd_val, '#60A5FA')} &nbsp; "
+        f"{val_span('Sig: ' + msig_val, '#F472B6')} &nbsp; "
+        f"{val_span('Hist: ' + mhst_val, 'gray')}",
+        unsafe_allow_html=True)
+    fig3 = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                         row_heights=[0.45, 0.55],
+                         subplot_titles=("Price", "MACD"))
+    fig3.add_trace(go.Scatter(x=df["time"], y=df["close"],
+        name="Price", line=dict(color="#F59E0B")), row=1, col=1)
+    fig3.add_trace(go.Scatter(x=df["time"], y=df["MACD"],
+        name="MACD", line=dict(color="#60A5FA", width=2)), row=2, col=1)
+    fig3.add_trace(go.Scatter(x=df["time"], y=df["MACD_signal"],
+        name="Signal", line=dict(color="#F472B6", width=1.5)), row=2, col=1)
+    colors_macd = ["green" if v >= 0 else "red" for v in df["MACD_hist"].fillna(0)]
+    fig3.add_trace(go.Bar(x=df["time"], y=df["MACD_hist"],
+        name="Histogram", marker_color=colors_macd), row=2, col=1)
+    fig3.update_layout(height=500, margin=dict(t=30, b=10))
+    st.plotly_chart(fig3, use_container_width=True)
+    st.caption("MACD (blue) above signal (pink) = bullish 🟢. Below = bearish 🔴. Green histogram bars = strengthening momentum.")
+
+with row2_r:
+    st.markdown(
+        f"#### 📡 ADX — Trend Strength &nbsp; "
+        f"{val_span('ADX: ' + adx_val, '#A78BFA')} &nbsp; "
+        f"{val_span('+DI: ' + dip_val, '#34D399')} &nbsp; "
+        f"{val_span('-DI: ' + din_val, '#F87171')}",
+        unsafe_allow_html=True)
+    fig_adx = go.Figure()
+    fig_adx.add_trace(go.Scatter(x=df["time"], y=df["ADX"],
+        name="ADX", line=dict(color="#A78BFA", width=2)))
+    fig_adx.add_trace(go.Scatter(x=df["time"], y=df["ADX_pos"],
+        name="+DI", line=dict(color="#34D399", width=1.5)))
+    fig_adx.add_trace(go.Scatter(x=df["time"], y=df["ADX_neg"],
+        name="-DI", line=dict(color="#F87171", width=1.5)))
+    fig_adx.add_hline(y=20, line_dash="dash", line_color="gray")
+    fig_adx.add_hline(y=40, line_dash="dash", line_color="white")
+    fig_adx.update_layout(height=500, margin=dict(t=30, b=10))
+    st.plotly_chart(fig_adx, use_container_width=True)
+    st.caption("ADX >20 = trend forming; >40 = strong trend. +DI above -DI = bullish 🟢. -DI above +DI = bearish 🔴. <20 = choppy market.")
+
+st.divider()
+
+# ── GRAPHS — ROW 3: CCI  |  Williams %R ──────────────────────
+
+row3_l, row3_r = st.columns(2)
+
+with row3_l:
+    st.markdown(
+        f"#### 📊 CCI &nbsp; {val_span('CCI: ' + cci_val, '#F59E0B')}",
+        unsafe_allow_html=True)
+    fig_cci = go.Figure()
+    fig_cci.add_trace(go.Scatter(x=df["time"], y=df["CCI"],
+        name="CCI", line=dict(color="#F59E0B", width=2)))
+    fig_cci.add_hline(y=100,  line_dash="dash", line_color="red")
+    fig_cci.add_hline(y=-100, line_dash="dash", line_color="lime")
+    fig_cci.add_hrect(y0=-300, y1=-100, fillcolor="green", opacity=0.05)
+    fig_cci.add_hrect(y0=100,  y1=300,  fillcolor="red",   opacity=0.05)
+    fig_cci.update_layout(height=400, margin=dict(t=30, b=10))
+    st.plotly_chart(fig_cci, use_container_width=True)
+    st.caption("CCI below -100 = oversold 🟢. Above +100 = overbought 🔴. Between = neutral.")
+
+with row3_r:
+    st.markdown(
+        f"#### 📉 Williams %R &nbsp; {val_span('%R: ' + wr_val, '#60A5FA')}",
+        unsafe_allow_html=True)
+    fig_wr = go.Figure()
+    fig_wr.add_trace(go.Scatter(x=df["time"], y=df["WilliamsR"],
+        name="Williams %R", line=dict(color="#60A5FA", width=2)))
+    fig_wr.add_hline(y=-20, line_dash="dash", line_color="red")
+    fig_wr.add_hline(y=-80, line_dash="dash", line_color="lime")
+    fig_wr.add_hrect(y0=-100, y1=-80, fillcolor="green", opacity=0.05)
+    fig_wr.add_hrect(y0=-20,  y1=0,   fillcolor="red",   opacity=0.05)
+    fig_wr.update_layout(height=400, margin=dict(t=30, b=10))
+    st.plotly_chart(fig_wr, use_container_width=True)
+    st.caption("Williams %R below -80 = oversold 🟢. Above -20 = overbought 🔴. Mid-range = neutral.")
+
+st.divider()
+
+# ── GRAPHS — ROW 4: ROC  |  ATR ───────────────────────────────
+
+row4_l, row4_r = st.columns(2)
+
+with row4_l:
+    st.markdown(
+        f"#### 📈 ROC — Rate of Change &nbsp; {val_span('ROC: ' + roc_val, '#F59E0B')}",
+        unsafe_allow_html=True)
+    colors_roc = ["green" if v >= 0 else "red" for v in df["ROC"].fillna(0)]
+    fig_roc = go.Figure()
+    fig_roc.add_trace(go.Bar(x=df["time"], y=df["ROC"],
+        name="ROC", marker_color=colors_roc))
+    fig_roc.add_hline(y=5,  line_dash="dash", line_color="lime")
+    fig_roc.add_hline(y=-5, line_dash="dash", line_color="red")
+    fig_roc.add_hline(y=0,  line_color="gray")
+    fig_roc.update_layout(height=400, margin=dict(t=30, b=10))
+    st.plotly_chart(fig_roc, use_container_width=True)
+    st.caption("ROC above +5% = strong positive momentum 🟢. Below -5% = strong negative momentum 🔴. Near 0 = stalling.")
+
+with row4_r:
+    st.markdown(
+        f"#### 📏 ATR — Volatility &nbsp; {val_span('ATR: ' + atr_val, '#C084FC')}",
         unsafe_allow_html=True)
     fig_atr = go.Figure()
     fig_atr.add_trace(go.Scatter(x=df["time"], y=df["ATR"],
         name="ATR", line=dict(color="#C084FC", width=2)))
-    fig_atr.update_layout(height=300)
+    fig_atr.update_layout(height=400, margin=dict(t=30, b=10))
     st.plotly_chart(fig_atr, use_container_width=True)
-    st.caption("📏 ATR: Rising = increasing volatility. Place stops 1.5–2× ATR from entry.")
+    st.caption("ATR rising = increasing volatility. Use for stop-loss sizing — place stops 1.5–2× ATR from entry.")
 
-    st.divider()
+st.divider()
 
-    sq_val   = "ON 🔒" if latest["squeeze"] else "OFF 🔓"
-    sq_color = "red"   if latest["squeeze"] else "lime"
+# ── GRAPHS — ROW 5: TTM Squeeze  |  Fear & Greed ─────────────
+
+row5_l, row5_r = st.columns(2)
+
+with row5_l:
     st.markdown(
-        f"#### 🔫 TTM Squeeze &nbsp;&nbsp; "
-        f"{val_span('Squeeze: ' + sq_val, sq_color)}",
+        f"#### 🔫 TTM Squeeze &nbsp; {val_span('Squeeze: ' + sq_val, sq_color)}",
         unsafe_allow_html=True)
     squeeze_colors = ["green" if v >= 0 else "red" for v in df["squeeze_hist"].fillna(0)]
     dot_colors     = ["black" if s else "lime" for s in df["squeeze"].fillna(False)]
@@ -1117,75 +1068,11 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
     fig_sq.add_trace(go.Scatter(x=df["time"], y=[0]*len(df), mode="markers",
         marker=dict(color=dot_colors, size=6, symbol="circle"),
         name="Squeeze (black=on, lime=off)"))
-    fig_sq.update_layout(height=350)
+    fig_sq.update_layout(height=400, margin=dict(t=30, b=10))
     st.plotly_chart(fig_sq, use_container_width=True)
-    st.caption("🔫 Black dots = coiling. Lime = released. Green bars = bullish momentum; red = bearish.")
+    st.caption("Black dots = market coiling for big move. Lime = move released. Green bars = bullish momentum; red = bearish.")
 
-    st.divider()
-
-    if st.session_state.advanced_loaded:
-
-        st.markdown("#### 🔄 Pi Cycle Top Indicator (BTC Daily — Max History)")
-        if not df_btc_long.empty and len(df_btc_long) >= 111:
-            df_pi = compute_pi_cycle(df_btc_long)
-            if not df_pi.empty:
-                fig_pi = go.Figure()
-                fig_pi.add_trace(go.Scatter(x=df_pi["time"], y=df_pi["close"],
-                    name="BTC Price", line=dict(color="#F59E0B", width=1)))
-                fig_pi.add_trace(go.Scatter(x=df_pi["time"], y=df_pi["MA_111"],
-                    name="111-day MA", line=dict(color="#60A5FA", width=2)))
-                df_pi_350 = df_pi.dropna(subset=["MA_350x2"])
-                if not df_pi_350.empty:
-                    fig_pi.add_trace(go.Scatter(x=df_pi_350["time"], y=df_pi_350["MA_350x2"],
-                        name="350-day MA ×2", line=dict(color="#F87171", width=2)))
-                fig_pi.update_layout(height=400, title="Pi Cycle Top — BTC Daily")
-                st.plotly_chart(fig_pi, use_container_width=True)
-                last_pi = df_pi.iloc[-1]
-                if pd.notna(last_pi.get("MA_350x2")):
-                    gap_pct = ((last_pi["MA_350x2"] - last_pi["MA_111"]) / last_pi["MA_350x2"]) * 100
-                    if last_pi["MA_111"] >= last_pi["MA_350x2"]:
-                        st.markdown("⚠️ **Pi Cycle TOP signal ACTIVE** — historically marks cycle tops.")
-                    else:
-                        st.markdown(f"✅ **No Pi Cycle top.** 111-day MA is {gap_pct:.1f}% below 2× 350-day MA.")
-                else:
-                    st.markdown("⏳ 350-day MA still building.")
-        st.caption("🔄 When 111-day MA crosses above 2× 350-day MA = historical BTC cycle top. SELL signal only.")
-
-        st.divider()
-
-        st.markdown("#### 📅 200-Week Moving Average (BTC Bear Market Floor)")
-        if not df_btc_long.empty and len(df_btc_long) >= 200:
-            df_w       = compute_200w_ma(df_btc_long)
-            df_w_valid = df_w.dropna(subset=["MA_200w"])
-            if not df_w_valid.empty:
-                current_200w = df_w_valid["MA_200w"].iloc[-1]
-                current_btc  = df_w["close"].iloc[-1]
-                pct_above    = ((current_btc - current_200w) / current_200w) * 100
-                pct_color    = "lime" if pct_above < 0 else "#F59E0B"
-                pct_str      = f"{abs(pct_above):.1f}% {'below' if pct_above < 0 else 'above'} 200w MA"
-                st.markdown(
-                    f"**200-Week MA:** &nbsp;"
-                    f"{val_span('$' + f'{current_200w:,.0f}', '#34D399')} &nbsp; "
-                    f"{val_span(pct_str, pct_color)}",
-                    unsafe_allow_html=True)
-                fig_200w = go.Figure()
-                fig_200w.add_trace(go.Scatter(x=df_w["time"], y=df_w["close"],
-                    name="BTC Price", line=dict(color="#F59E0B", width=1)))
-                fig_200w.add_trace(go.Scatter(x=df_w_valid["time"], y=df_w_valid["MA_200w"],
-                    name="200-week MA", line=dict(color="#34D399", width=2.5)))
-                fig_200w.update_layout(height=400, title="BTC Price vs 200-Week MA")
-                st.plotly_chart(fig_200w, use_container_width=True)
-                if pct_above < 0:
-                    st.markdown(f"🟢 **BTC is {abs(pct_above):.1f}% BELOW the 200-week MA (${current_200w:,.0f})** — generational buy zone.")
-                else:
-                    st.markdown(f"📊 BTC is **{pct_above:.1f}% above** the 200-week MA (${current_200w:,.0f}).")
-        st.caption("📅 Every major BTC bear market bottom has been at or near the 200-week MA.")
-
-    else:
-        st.info("👆 Click 'Load Advanced Data' above to render Pi Cycle and 200-Week MA.")
-
-    st.divider()
-
+with row5_r:
     st.markdown("#### 😨 Fear & Greed — 30 Day History")
     if not fg_df.empty:
         fg_colors = [
@@ -1198,13 +1085,81 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
             marker_color=fg_colors, name="Fear & Greed"))
         fig_fg.add_hline(y=75, line_dash="dash", line_color="red",  annotation_text="Extreme Greed")
         fig_fg.add_hline(y=25, line_dash="dash", line_color="lime", annotation_text="Extreme Fear")
-        fig_fg.update_layout(height=350, yaxis_range=[0, 100])
+        fig_fg.update_layout(height=400, margin=dict(t=30, b=10), yaxis_range=[0, 100])
         st.plotly_chart(fig_fg, use_container_width=True)
-    st.caption("😨 0 = Extreme Fear (historically good buy), 100 = Extreme Greed (historically good sell).")
+    else:
+        st.info("Fear & Greed data unavailable.")
+    st.caption("0 = Extreme Fear (historically good buy) 🟢. 100 = Extreme Greed (historically good sell) 🔴.")
+
+st.divider()
+
+# ── GRAPHS — ROW 6: Pi Cycle  |  200-Week MA ─────────────────
+
+row6_l, row6_r = st.columns(2)
+
+with row6_l:
+    st.markdown("#### 🔄 Pi Cycle Top Indicator (BTC)")
+    if not df_btc_long.empty and len(df_btc_long) >= 111:
+        df_pi = compute_pi_cycle(df_btc_long)
+        if not df_pi.empty:
+            fig_pi = go.Figure()
+            fig_pi.add_trace(go.Scatter(x=df_pi["time"], y=df_pi["close"],
+                name="BTC Price", line=dict(color="#F59E0B", width=1)))
+            fig_pi.add_trace(go.Scatter(x=df_pi["time"], y=df_pi["MA_111"],
+                name="111-day MA", line=dict(color="#60A5FA", width=2)))
+            df_pi_350 = df_pi.dropna(subset=["MA_350x2"])
+            if not df_pi_350.empty:
+                fig_pi.add_trace(go.Scatter(x=df_pi_350["time"], y=df_pi_350["MA_350x2"],
+                    name="350-day MA ×2", line=dict(color="#F87171", width=2)))
+            fig_pi.update_layout(height=400, margin=dict(t=30, b=10))
+            st.plotly_chart(fig_pi, use_container_width=True)
+            last_pi = df_pi.iloc[-1]
+            if pd.notna(last_pi.get("MA_350x2")):
+                gap_pct = ((last_pi["MA_350x2"] - last_pi["MA_111"]) / last_pi["MA_350x2"]) * 100
+                if last_pi["MA_111"] >= last_pi["MA_350x2"]:
+                    st.markdown("⚠️ **Pi Cycle TOP signal ACTIVE** — historically marks BTC cycle tops. Consider reducing.")
+                else:
+                    st.markdown(f"✅ **No Pi Cycle top.** 111-day MA is {gap_pct:.1f}% below 2× 350-day MA.")
+            else:
+                st.markdown("⏳ 350-day MA still building history.")
+    else:
+        st.info("Not enough BTC history for Pi Cycle.")
+    st.caption("When 111-day MA crosses above 2× 350-day MA = historical BTC cycle top. SELL signal only.")
+
+with row6_r:
+    st.markdown("#### 📅 200-Week MA (BTC Bear Market Floor)")
+    if not df_btc_long.empty and len(df_btc_long) >= 200:
+        df_w       = compute_200w_ma(df_btc_long)
+        df_w_valid = df_w.dropna(subset=["MA_200w"])
+        if not df_w_valid.empty:
+            current_200w = df_w_valid["MA_200w"].iloc[-1]
+            current_btc  = df_w["close"].iloc[-1]
+            pct_above    = ((current_btc - current_200w) / current_200w) * 100
+            pct_color    = "lime" if pct_above < 0 else "#F59E0B"
+            pct_str      = f"{abs(pct_above):.1f}% {'below ⬇️' if pct_above < 0 else 'above ⬆️'} 200w MA"
+            st.markdown(
+                f"**200w MA:** {val_span('$' + f'{current_200w:,.0f}', '#34D399')} &nbsp; "
+                f"{val_span(pct_str, pct_color)}",
+                unsafe_allow_html=True)
+            fig_200w = go.Figure()
+            fig_200w.add_trace(go.Scatter(x=df_w["time"], y=df_w["close"],
+                name="BTC Price", line=dict(color="#F59E0B", width=1)))
+            fig_200w.add_trace(go.Scatter(x=df_w_valid["time"], y=df_w_valid["MA_200w"],
+                name="200-week MA", line=dict(color="#34D399", width=2.5)))
+            fig_200w.update_layout(height=400, margin=dict(t=30, b=10))
+            st.plotly_chart(fig_200w, use_container_width=True)
+            if pct_above < 0:
+                st.markdown(f"🟢 **BTC is {abs(pct_above):.1f}% BELOW the 200-week MA** — generational buy zone historically.")
+            else:
+                st.markdown(f"📊 BTC is **{pct_above:.1f}% above** the 200-week MA (${current_200w:,.0f}).")
+    else:
+        st.info("Not enough BTC history for 200-week MA.")
+    st.caption("Every major BTC bear market bottom has been at or near the 200-week MA. Price below = rare buy opportunity.")
+
+st.divider()
 
 # ── ALERT HISTORY ─────────────────────────────────────────────
 
-st.divider()
 st.markdown("#### 🔔 Alert History (this session)")
 for alert in st.session_state.alerts:
     st.markdown(f"- {alert}")
