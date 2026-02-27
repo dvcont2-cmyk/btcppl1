@@ -216,11 +216,11 @@ def composite_score(row):
     return net_score, bullish_count, bearish_count, indicators
 
 def signal_label(score):
-    if score >= 6:
+    if score >= 5:
         return "🟢 STRONG BUY"
-    elif score >= 3:
+    elif score >= 2:
         return "🟡 DCA BUY ZONE"
-    elif score >= 0:
+    elif score >= -1:
         return "⚪ HOLD / WATCH"
     elif score >= -3:
         return "🟠 CAUTION / REDUCE"
