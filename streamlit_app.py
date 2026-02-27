@@ -16,50 +16,37 @@ CG_KEY = st.secrets["COINGECKO_API_KEY"]
 
 st.markdown("""
 <style>
-[data-testid="stMetricValue"] {
-    font-size: 1rem !important;
-    font-weight: 600;
-}
-[data-testid="stMetricLabel"] {
-    font-size: 0.75rem !important;
-}
-[data-testid="stMetricDelta"] {
-    font-size: 0.75rem !important;
-}
-[data-testid="stMetric"] {
-    padding: 4px 0px !important;
-}
-.block-container {
-    padding-top: 2.75rem !important;
-}
-[data-testid="stAppViewBlockContainer"] {
-    padding-top: 1.5rem !important;
-}
+[data-testid="stMetricValue"] { font-size: 1rem !important; font-weight: 600; }
+[data-testid="stMetricLabel"] { font-size: 0.75rem !important; }
+[data-testid="stMetricDelta"] { font-size: 0.75rem !important; }
+[data-testid="stMetric"]      { padding: 4px 0px !important; }
+.block-container              { padding-top: 2.75rem !important; }
+[data-testid="stAppViewBlockContainer"] { padding-top: 1.5rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
 COINS = {
-    "Bitcoin (BTC)":  ("bitcoin",      "BTC",  "https://assets.coingecko.com/coins/images/1/large/bitcoin.png"),
-    "Ethereum (ETH)": ("ethereum",     "ETH",  "https://assets.coingecko.com/coins/images/279/large/ethereum.png"),
-    "Solana (SOL)":   ("solana",       "SOL",  "https://assets.coingecko.com/coins/images/4128/large/solana.png"),
-    "XRP":            ("ripple",       "XRP",  "https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png"),
-    "BNB":            ("binancecoin",  "BNB",  "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png"),
-    "Polkadot (DOT)": ("polkadot",     "DOT",  "https://assets.coingecko.com/coins/images/12171/large/polkadot.png"),
-    "Chainlink (LINK)":("chainlink",   "LINK", "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png"),
-    "Sui (SUI)":      ("sui",          "SUI",  "https://assets.coingecko.com/coins/images/26375/large/sui_asset.jpeg"),
-    "Hbar (HBAR)":    ("hedera-hashgraph", "HBAR", "https://assets.coingecko.com/coins/images/3688/large/hbar.png"),
+    "Bitcoin (BTC)":   ("bitcoin",          "BTC",  "https://assets.coingecko.com/coins/images/1/large/bitcoin.png"),
+    "Ethereum (ETH)":  ("ethereum",         "ETH",  "https://assets.coingecko.com/coins/images/279/large/ethereum.png"),
+    "Solana (SOL)":    ("solana",           "SOL",  "https://assets.coingecko.com/coins/images/4128/large/solana.png"),
+    "XRP":             ("ripple",           "XRP",  "https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png"),
+    "BNB":             ("binancecoin",      "BNB",  "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png"),
+    "Polkadot (DOT)":  ("polkadot",         "DOT",  "https://assets.coingecko.com/coins/images/12171/large/polkadot.png"),
+    "Chainlink (LINK)":("chainlink",        "LINK", "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png"),
+    "Sui (SUI)":       ("sui",              "SUI",  "https://assets.coingecko.com/coins/images/26375/large/sui_asset.jpeg"),
+    "Hbar (HBAR)":     ("hedera-hashgraph", "HBAR", "https://assets.coingecko.com/coins/images/3688/large/hbar.png"),
 }
 
 CRYPTOCOMPARE_SYMBOLS = {
-    "bitcoin":           "BTC",
-    "ethereum":          "ETH",
-    "solana":            "SOL",
-    "ripple":            "XRP",
-    "binancecoin":       "BNB",
-    "polkadot":          "DOT",
-    "chainlink":         "LINK",
-    "sui":               "SUI",
-    "hedera-hashgraph":  "HBAR",
+    "bitcoin":          "BTC",
+    "ethereum":         "ETH",
+    "solana":           "SOL",
+    "ripple":           "XRP",
+    "binancecoin":      "BNB",
+    "polkadot":         "DOT",
+    "chainlink":        "LINK",
+    "sui":              "SUI",
+    "hedera-hashgraph": "HBAR",
 }
 
 st.sidebar.header("⚙️ Settings")
@@ -75,10 +62,7 @@ if st.sidebar.button("🔄 Force Refresh"):
 # ── API WRAPPERS ───────────────────────────────────────────────
 
 def coingecko_get(url, params=None, retries=3, backoff=8):
-    headers = {
-        "accept": "application/json",
-        "x-cg-demo-api-key": CG_KEY
-    }
+    headers = {"accept": "application/json", "x-cg-demo-api-key": CG_KEY}
     for attempt in range(retries):
         try:
             r = requests.get(url, params=params, headers=headers, timeout=15)
@@ -94,10 +78,7 @@ def coingecko_get(url, params=None, retries=3, backoff=8):
     return None
 
 def coingecko_get_fast(url, params=None, retries=2, backoff=3):
-    headers = {
-        "accept": "application/json",
-        "x-cg-demo-api-key": CG_KEY
-    }
+    headers = {"accept": "application/json", "x-cg-demo-api-key": CG_KEY}
     for attempt in range(retries):
         try:
             r = requests.get(url, params=params, headers=headers, timeout=10)
@@ -121,10 +102,9 @@ def get_fear_greed():
         r.raise_for_status()
         data = r.json()["data"]
         df = pd.DataFrame(data)
-        df["value"] = df["value"].astype(int)
+        df["value"]     = df["value"].astype(int)
         df["timestamp"] = pd.to_datetime(df["timestamp"].astype(int), unit="s")
-        df = df.sort_values("timestamp")
-        return df
+        return df.sort_values("timestamp")
     except:
         return pd.DataFrame()
 
@@ -153,8 +133,7 @@ def get_market_data(coin_id):
         )
         if r is None:
             return {}
-        data   = r.json()
-        market = data.get("market_data", {})
+        market = r.json().get("market_data", {})
         return {
             "price":      market.get("current_price", {}).get("usd", 0),
             "change_1h":  market.get("price_change_percentage_1h_in_currency", {}).get("usd", None),
@@ -193,7 +172,6 @@ def get_ohlc_data(coin_id, days):
 
 @st.cache_data(ttl=86400)
 def get_long_daily(coin_id):
-    """Fetch 2000 days of daily OHLC from CryptoCompare — no API key needed."""
     try:
         symbol = CRYPTOCOMPARE_SYMBOLS.get(coin_id, "BTC")
         r = requests.get(
@@ -209,8 +187,7 @@ def get_long_daily(coin_id):
         df["open"]  = df["open"].astype(float)
         df["high"]  = df["high"].astype(float)
         df["low"]   = df["low"].astype(float)
-        df = df[df["close"] > 0]
-        df = df.sort_values("time").reset_index(drop=True)
+        df = df[df["close"] > 0].sort_values("time").reset_index(drop=True)
         return df
     except Exception as e:
         st.error(f"Long daily fetch error: {e}")
@@ -250,11 +227,8 @@ def compute_squeeze(df):
     atr      = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=20).average_true_range()
     kc_upper = kc_mid + 1.5 * atr
     kc_lower = kc_mid - 1.5 * atr
-    df["squeeze"] = (bb.bollinger_hband() < kc_upper) & (bb.bollinger_lband() > kc_lower)
-    delta = df["close"] - (
-        (df["high"].rolling(20).max() + df["low"].rolling(20).min()) / 2
-        + df["close"].rolling(20).mean()
-    ) / 2
+    df["squeeze"]      = (bb.bollinger_hband() < kc_upper) & (bb.bollinger_lband() > kc_lower)
+    delta              = df["close"] - ((df["high"].rolling(20).max() + df["low"].rolling(20).min()) / 2 + df["close"].rolling(20).mean()) / 2
     df["squeeze_hist"] = delta.rolling(20).mean()
     return df
 
@@ -271,7 +245,6 @@ def compute_200w_ma(df_daily):
     return df
 
 def inject_long_ema(df, df_long, timeframe):
-    """Overwrite EMA 50/200 on main df using long daily history."""
     if df_long.empty or len(df_long) < 200:
         return df
     df_ema = df_long[["time", "close"]].copy()
@@ -279,22 +252,19 @@ def inject_long_ema(df, df_long, timeframe):
     df_ema["EMA_200"] = ta.trend.EMAIndicator(df_ema["close"], window=200).ema_indicator()
     if timeframe == "Weekly":
         df_ema = df_ema.set_index("time").resample("W").last().reset_index()
-    df      = df.sort_values("time").reset_index(drop=True)
-    df_ema  = df_ema.sort_values("time").reset_index(drop=True)
-    df      = pd.merge_asof(df, df_ema[["time", "EMA_50", "EMA_200"]],
-                            on="time", direction="nearest",
-                            suffixes=("_short", "_long"))
+    df     = df.sort_values("time").reset_index(drop=True)
+    df_ema = df_ema.sort_values("time").reset_index(drop=True)
+    df     = pd.merge_asof(df, df_ema[["time", "EMA_50", "EMA_200"]],
+                           on="time", direction="nearest", suffixes=("_short", "_long"))
     for col in ["EMA_50", "EMA_200"]:
-        long_col  = f"{col}_long"
-        short_col = f"{col}_short"
-        if long_col in df.columns:
-            df[col] = df[long_col]
-            df.drop(columns=[long_col], inplace=True)
-        if short_col in df.columns:
-            df.drop(columns=[short_col], inplace=True)
+        if f"{col}_long" in df.columns:
+            df[col] = df[f"{col}_long"]
+            df.drop(columns=[f"{col}_long"], inplace=True)
+        if f"{col}_short" in df.columns:
+            df.drop(columns=[f"{col}_short"], inplace=True)
     return df
 
-def detect_support_resistance(df, window=3, num_levels=4):
+def detect_support_resistance(df, window=3, num_levels=5):
     highs = df["high"] if "high" in df.columns else df["close"]
     lows  = df["low"]  if "low"  in df.columns else df["close"]
     resistance, support = [], []
@@ -305,7 +275,6 @@ def detect_support_resistance(df, window=3, num_levels=4):
         if all(lows.iloc[i] <= lows.iloc[i-window:i]) and \
            all(lows.iloc[i] <= lows.iloc[i+1:i+window+1]):
             support.append(float(lows.iloc[i]))
-
     def cluster(levels, pct=0.02):
         levels = sorted(set(levels))
         clustered = []
@@ -313,13 +282,62 @@ def detect_support_resistance(df, window=3, num_levels=4):
             if not clustered or abs(l - clustered[-1]) / clustered[-1] > pct:
                 clustered.append(l)
         return clustered
-
     return cluster(support)[:num_levels], cluster(resistance)[-num_levels:]
+
+def detect_major_sr_zones(df_long, price, num_levels=6):
+    """
+    Detect major S/R zones from long daily history — more significant
+    than the short OHLC levels. Uses swing highs/lows with wider window.
+    Also includes round number levels near current price.
+    """
+    if df_long.empty:
+        return [], []
+
+    highs = df_long["high"]
+    lows  = df_long["low"]
+    window = 20  # wider window = more significant levels
+    resistance, support = [], []
+
+    for i in range(window, len(df_long) - window):
+        if all(highs.iloc[i] >= highs.iloc[i-window:i]) and \
+           all(highs.iloc[i] >= highs.iloc[i+1:i+window+1]):
+            resistance.append(float(highs.iloc[i]))
+        if all(lows.iloc[i] <= lows.iloc[i-window:i]) and \
+           all(lows.iloc[i] <= lows.iloc[i+1:i+window+1]):
+            support.append(float(lows.iloc[i]))
+
+    def cluster(levels, pct=0.03):
+        levels = sorted(set(levels))
+        clustered = []
+        for l in levels:
+            if not clustered or abs(l - clustered[-1]) / clustered[-1] > pct:
+                clustered.append(l)
+        return clustered
+
+    sup_levels = cluster(support)
+    res_levels = cluster(resistance)
+
+    # Filter to relevant range: within 50% of current price
+    sup_levels = [s for s in sup_levels if s < price and s > price * 0.5]
+    res_levels = [r for r in res_levels if r > price and r < price * 1.5]
+
+    # Add round number levels near current price
+    magnitude = 10 ** (len(str(int(price))) - 2)
+    for mult in range(int(price * 0.7 / magnitude), int(price * 1.3 / magnitude) + 1):
+        round_level = mult * magnitude
+        if round_level < price * 0.98:
+            sup_levels.append(round_level)
+        elif round_level > price * 1.02:
+            res_levels.append(round_level)
+
+    sup_levels = sorted(cluster(sup_levels))[-num_levels:]
+    res_levels = sorted(cluster(res_levels))[:num_levels]
+
+    return sup_levels, res_levels
 
 def detect_trend_structure(df, window=5):
     closes    = df["close"].values
-    highs_pts = []
-    lows_pts  = []
+    highs_pts, lows_pts = [], []
     for i in range(window, len(closes) - window):
         if closes[i] == max(closes[max(0, i-window):i+window+1]):
             highs_pts.append(closes[i])
@@ -330,13 +348,12 @@ def detect_trend_structure(df, window=5):
         hl = lows_pts[-1]  > lows_pts[-2]
         lh = highs_pts[-1] < highs_pts[-2]
         ll = lows_pts[-1]  < lows_pts[-2]
-        if hh and hl:
-            return "🟢 Uptrend — Higher Highs & Higher Lows", "green"
-        elif lh and ll:
-            return "🔴 Downtrend — Lower Highs & Lower Lows", "red"
-        else:
-            return "⚪ Choppy — No clear structure", "gray"
+        if hh and hl:   return "🟢 Uptrend — Higher Highs & Higher Lows", "green"
+        elif lh and ll: return "🔴 Downtrend — Lower Highs & Lower Lows", "red"
+        else:           return "⚪ Choppy — No clear structure", "gray"
     return "⚪ Not enough swing points yet", "gray"
+
+# ── SCORING ────────────────────────────────────────────────────
 
 def composite_score(row):
     indicators = []
@@ -346,7 +363,7 @@ def composite_score(row):
     if pd.isna(rsi):
         indicators.append(("RSI (14)", 0, "⚪", "Neutral — not enough data"))
     elif rsi < 30:
-        indicators.append(("RSI (14)", 1, "✅", f"Strongly oversold at {rsi:.1f} — Strong Buy signal (<30)"))
+        indicators.append(("RSI (14)", 2, "✅", f"Strongly oversold at {rsi:.1f} — Strong Buy signal (<30)"))
     elif rsi < 40:
         indicators.append(("RSI (14)", 1, "✅", f"Oversold at {rsi:.1f} — Buy zone (<40)"))
     elif rsi > 70:
@@ -392,21 +409,19 @@ def composite_score(row):
     if pd.isna(ema200):
         indicators.append(("EMA 200 Trend", 0, "⚪", "Neutral — not enough data for 200-period EMA"))
     elif close > ema200:
-        indicators.append(("EMA 200 Trend", 1, "✅", f"Price above EMA 200 (${ema200:,.2f}) — long-term uptrend"))
+        indicators.append(("EMA 200 Trend", 2, "✅", f"Price above EMA 200 (${ema200:,.2f}) — long-term uptrend"))
     else:
-        indicators.append(("EMA 200 Trend", -1, "🔴", f"Price below EMA 200 (${ema200:,.2f}) — long-term downtrend"))
+        indicators.append(("EMA 200 Trend", -2, "🔴", f"Price below EMA 200 (${ema200:,.2f}) — long-term downtrend"))
 
     ema50 = row["EMA_50"]
     if pd.isna(ema50) or pd.isna(ema200):
         indicators.append(("EMA 50/200 Cross", 0, "⚪", "Neutral — not enough data"))
     elif ema50 > ema200:
-        indicators.append(("EMA 50/200 Cross", 1, "✅", "Golden Cross — EMA 50 above EMA 200 — bullish long-term"))
+        indicators.append(("EMA 50/200 Cross", 2, "✅", "Golden Cross — EMA 50 above EMA 200 — bullish long-term"))
     else:
-        indicators.append(("EMA 50/200 Cross", -1, "🔴", "Death Cross — EMA 50 below EMA 200 — bearish long-term"))
+        indicators.append(("EMA 50/200 Cross", -2, "🔴", "Death Cross — EMA 50 below EMA 200 — bearish long-term"))
 
-    adx     = row["ADX"]
-    adx_pos = row["ADX_pos"]
-    adx_neg = row["ADX_neg"]
+    adx, adx_pos, adx_neg = row["ADX"], row["ADX_pos"], row["ADX_neg"]
     if pd.isna(adx):
         indicators.append(("ADX Strength", 0, "⚪", "Neutral — not enough data"))
     elif adx < 20:
@@ -448,20 +463,242 @@ def composite_score(row):
 
     bullish_count = sum(1 for _, s, _, _ in indicators if s > 0)
     bearish_count = sum(1 for _, s, _, _ in indicators if s < 0)
-    net_score     = bullish_count - bearish_count
+    net_score     = sum(s for _, s, _, _ in indicators)
     return net_score, bullish_count, bearish_count, indicators
 
 def signal_label(score):
-    if score >= 5:
-        return "🟢 STRONG BUY"
-    elif score >= 2:
-        return "🟡 DCA BUY ZONE"
-    elif score >= -1:
-        return "⚪ HOLD / WATCH"
-    elif score >= -3:
-        return "🟠 CAUTION / REDUCE"
+    if score >= 7:   return "🟢 STRONG BUY"
+    elif score >= 3: return "🟡 DCA BUY ZONE"
+    elif score >= -2: return "⚪ HOLD / WATCH"
+    elif score >= -5: return "🟠 CAUTION / REDUCE"
+    else:             return "🔴 STRONG SELL"
+
+# ── DCA COMMENTARY ─────────────────────────────────────────────
+
+def format_entry_block(entries, stop, target):
+    rows = ""
+    for label, px in entries:
+        rows += f"<tr><td style='padding:3px 14px 3px 0; color:#86efac'>🟢 {label}</td><td style='color:#f1f5f9; font-weight:600'>${px:,.2f}</td></tr>"
+    rows += f"<tr><td style='padding:3px 14px 3px 0; color:#f87171'>🛑 Stop Reference</td><td style='color:#f1f5f9; font-weight:600'>${stop:,.2f}</td></tr>"
+    rows += f"<tr><td style='padding:3px 14px 3px 0; color:#fbbf24'>🎯 First Target</td><td style='color:#f1f5f9; font-weight:600'>${target:,.2f}</td></tr>"
+    return f"<table style='margin-top:10px; font-size:0.85rem; border-collapse:collapse'>{rows}</table>"
+
+def format_sr_block(support_levels, resistance_levels, price):
+    rows = ""
+    for r in sorted(resistance_levels, reverse=True):
+        pct = ((r - price) / price) * 100
+        rows += f"<tr><td style='padding:3px 14px 3px 0; color:#f87171'>🔴 Resistance</td><td style='color:#f1f5f9; font-weight:600'>${r:,.2f}</td><td style='color:#9ca3af; font-size:0.8rem'>+{pct:.1f}%</td></tr>"
+    rows += f"<tr><td style='padding:3px 14px 3px 0; color:#60a5fa'>── Current Price</td><td style='color:#60a5fa; font-weight:600'>${price:,.2f}</td><td></td></tr>"
+    for s in sorted(support_levels, reverse=True):
+        pct = ((s - price) / price) * 100
+        rows += f"<tr><td style='padding:3px 14px 3px 0; color:#86efac'>🟢 Support</td><td style='color:#f1f5f9; font-weight:600'>${s:,.2f}</td><td style='color:#9ca3af; font-size:0.8rem'>{pct:.1f}%</td></tr>"
+    return f"<table style='margin-top:6px; font-size:0.85rem; border-collapse:collapse'>{rows}</table>"
+
+def generate_commentary(row, df_btc_long, df_long_coin, price):
+    signals   = []
+    rsi       = row["RSI"]
+    wr        = row["WilliamsR"]
+    ema50     = row["EMA_50"]
+    ema200    = row["EMA_200"]
+    stoch_k   = row["StochRSI_k"]
+    macd_hist = row["MACD_hist"]
+    atr       = row["ATR"] if pd.notna(row["ATR"]) else price * 0.03
+
+    death_cross  = pd.notna(ema50) and pd.notna(ema200) and ema50 < ema200
+    golden_cross = pd.notna(ema50) and pd.notna(ema200) and ema50 > ema200
+    ema_bear     = pd.notna(ema200) and price < ema200
+    rsi_extreme  = pd.notna(rsi) and rsi < 30
+    rsi_oversold = pd.notna(rsi) and rsi < 40
+    wr_extreme   = pd.notna(wr)  and wr < -80
+    stoch_low    = pd.notna(stoch_k) and stoch_k < 20
+    macd_turning = pd.notna(macd_hist) and macd_hist > 0
+
+    # ── 200-week MA ──────────────────────────────────────────
+    near_200w_ma   = False
+    below_200w_ma  = False
+    ma_200w_val    = None
+    pct_from_200w  = None
+    if not df_btc_long.empty and len(df_btc_long) >= 200:
+        df_w = df_btc_long.set_index("time").resample("W").last().reset_index()
+        df_w["MA_200w"] = df_w["close"].rolling(200).mean()
+        df_w_valid = df_w.dropna(subset=["MA_200w"])
+        if not df_w_valid.empty:
+            ma_200w_val   = df_w_valid["MA_200w"].iloc[-1]
+            btc_now       = df_w["close"].iloc[-1]
+            pct_from_200w = ((btc_now - ma_200w_val) / ma_200w_val) * 100
+            near_200w_ma  = abs(pct_from_200w) <= 15
+            below_200w_ma = pct_from_200w < 0
+
+    # ── Pi Cycle gap ─────────────────────────────────────────
+    pi_gap_pct     = None
+    pi_bottom_zone = False
+    if not df_btc_long.empty and len(df_btc_long) >= 350:
+        df_pi = df_btc_long.copy()
+        df_pi["MA_111"]   = df_pi["close"].rolling(111).mean()
+        df_pi["MA_350x2"] = df_pi["close"].rolling(350).mean() * 2
+        df_pi = df_pi.dropna(subset=["MA_111", "MA_350x2"])
+        if not df_pi.empty:
+            last          = df_pi.iloc[-1]
+            pi_gap_pct    = ((last["MA_350x2"] - last["MA_111"]) / last["MA_350x2"]) * 100
+            pi_bottom_zone = pi_gap_pct > 30
+
+    # ── Major S/R zones ──────────────────────────────────────
+    major_support, major_resistance = detect_major_sr_zones(df_long_coin, price)
+
+    # ── Nearest support as stop reference ────────────────────
+    nearest_support    = max([s for s in major_support if s < price], default=price * 0.85)
+    nearest_resistance = min([r for r in major_resistance if r > price], default=price * 1.15)
+
+    # ── Confluence score ─────────────────────────────────────
+    confluence = 0
+    if rsi_extreme:    confluence += 2
+    elif rsi_oversold: confluence += 1
+    if wr_extreme:     confluence += 1
+    if stoch_low:      confluence += 1
+    if near_200w_ma:   confluence += 2
+    if pi_bottom_zone: confluence += 2
+    if macd_turning:   confluence += 1
+
+    # ── 1. Macro trend ───────────────────────────────────────
+    if golden_cross:
+        stop_gc  = ema200 if pd.notna(ema200) else price * 0.88
+        target_gc = nearest_resistance
+        entries_gc = [
+            ("Entry — Pullback to EMA 50",  ema50 if pd.notna(ema50) else price),
+            ("Entry — Dip to EMA 50 −3%",   (ema50 if pd.notna(ema50) else price) * 0.97),
+        ]
+        entry_html = format_entry_block(entries_gc, stop_gc, target_gc)
+        signals.append(("bullish", "📈",
+            "Golden Cross Active — Macro Uptrend Confirmed",
+            f"EMA 50 is above EMA 200. The long-term trend is bullish — the safest DCA environment. "
+            f"Buy dips toward EMA 50 (${ema50:,.2f}) rather than chasing highs. "
+            f"If price reclaims and holds EMA 50 after a dip, that's your entry trigger."
+            + entry_html))
+    elif death_cross:
+        signals.append(("bearish", "📉",
+            "Death Cross Active — Macro Downtrend in Progress",
+            f"EMA 50 (${ema50:,.2f}) is below EMA 200 (${ema200:,.2f}). "
+            f"The long-term trend is bearish. Any DCA here should use smaller position sizes "
+            f"than in a confirmed uptrend. Oversold bounces are common but often fail — "
+            f"look for confluence with the signals below before acting."))
+
+    # ── 2. Tier 1 — Deeply oversold in downtrend ─────────────
+    if death_cross and rsi_extreme and wr_extreme:
+        stop_t1    = price - (1.5 * atr)
+        target_t1  = ema50 if pd.notna(ema50) else nearest_resistance
+        entries_t1 = [
+            ("Entry 1 — Now (market)",   price),
+            ("Entry 2 — Limit −5%",      price * 0.95),
+            ("Entry 3 — Limit −10%",     price * 0.90),
+        ]
+        entry_html = format_entry_block(entries_t1, stop_t1, target_t1)
+        signals.append(("dca_small", "🟡",
+            "Tier 1 DCA — Deeply Oversold in Downtrend",
+            f"RSI ({rsi:.1f}) below 30 AND Williams %R ({wr:.1f}) below -80 — "
+            f"both momentum indicators at extreme oversold levels. "
+            f"Historically produces 10–25% relief bounces even in downtrends. "
+            f"<b>Deploy 10–15% of intended position.</b> Use a ladder — do not lump sum."
+            + entry_html))
+    elif death_cross and rsi_oversold:
+        signals.append(("dca_small", "🟡",
+            "Tier 1 Watch — Approaching Oversold in Downtrend",
+            f"RSI ({rsi:.1f}) is in the oversold zone but not yet extreme. "
+            f"Williams %R ({wr:.1f if pd.notna(wr) else 'N/A'}) not yet below -80. "
+            f"Watch for RSI to breach 30 and Williams %R to breach -80 simultaneously "
+            f"before triggering a Tier 1 entry."))
+
+    # ── 3. Tier 2 — 200-week MA proximity ────────────────────
+    if near_200w_ma and ma_200w_val:
+        if below_200w_ma:
+            stop_t2    = ma_200w_val * 0.85
+            target_t2  = ema200 if pd.notna(ema200) else price * 1.20
+            entries_t2 = [
+                ("Entry 1 — Now (below 200w MA)", price),
+                ("Entry 2 — At 200w MA",          ma_200w_val),
+                ("Entry 3 — 200w MA −5%",         ma_200w_val * 0.95),
+            ]
+            entry_html = format_entry_block(entries_t2, stop_t2, target_t2)
+            signals.append(("dca_medium", "🟢",
+                f"Tier 2 DCA — BTC Below 200-Week MA (${ma_200w_val:,.0f})",
+                f"BTC is {abs(pct_from_200w):.1f}% BELOW the 200-week MA — "
+                f"a zone that has marked every major bear market bottom (2015, 2018, 2022). "
+                f"<b>Deploy 25–35% of intended position.</b> This is a rare, high-conviction zone."
+                + entry_html))
+        else:
+            signals.append(("dca_medium", "🟡",
+                f"Tier 2 Watch — BTC Within 15% of 200-Week MA (${ma_200w_val:,.0f})",
+                f"BTC is {abs(pct_from_200w):.1f}% above the 200-week MA. "
+                f"Approaching historically strong support. If BTC falls to ${ma_200w_val:,.0f}, "
+                f"prepare to deploy 25–35% of your intended position."))
+
+    # ── 4. Tier 3 — Pi Cycle bottom zone ─────────────────────
+    if pi_bottom_zone and pi_gap_pct is not None:
+        stop_t3    = price * 0.80
+        target_t3  = price * 2.0
+        entries_t3 = [
+            ("Tranche 1 — Now",       price),
+            ("Tranche 2 — In 2 weeks", price * 0.93),
+            ("Tranche 3 — In 4 weeks", price * 0.86),
+        ]
+        entry_html = format_entry_block(entries_t3, stop_t3, target_t3)
+        signals.append(("dca_large", "🟢",
+            f"Tier 3 DCA — Pi Cycle Macro Bottom Zone ({pi_gap_pct:.1f}% gap)",
+            f"The 111-day MA is {pi_gap_pct:.1f}% below the 2× 350-day MA — deep macro bottom territory. "
+            f"This confluence is rare and has preceded every major BTC bull run. "
+            f"<b>Deploy 30–40% of intended position across 3 tranches over 4 weeks.</b>"
+            + entry_html))
+
+    # ── 5. MACD momentum turning ─────────────────────────────
+    if macd_turning and rsi_oversold:
+        signals.append(("bullish", "🔄",
+            "Momentum Confirmation — MACD Histogram Turning Positive",
+            f"MACD histogram just turned positive while RSI ({rsi:.1f}) remains oversold. "
+            f"Selling pressure is easing. Not a standalone signal but adds confidence "
+            f"to any DCA tier signals above."))
+
+    # ── 6. Stoch RSI confirmation ─────────────────────────────
+    if stoch_low and rsi_oversold:
+        signals.append(("bullish", "⚡",
+            "Stochastic RSI Confirmation — Both Oscillators Oversold",
+            f"Stoch RSI K ({stoch_k:.1f}) below 20 alongside RSI ({rsi:.1f}) below 40. "
+            f"Dual oscillator oversold alignment increases probability of a near-term bounce."))
+
+    # ── 7. S/R zone summary ───────────────────────────────────
+    if major_support or major_resistance:
+        sr_html = format_sr_block(major_support, major_resistance, price)
+        signals.append(("neutral", "📊",
+            "Major Support & Resistance Zones",
+            f"Key levels detected from long-term price history. "
+            f"Support zones below current price are potential DCA targets. "
+            f"Resistance zones above are potential take-profit targets."
+            + sr_html))
+
+    # ── 8. No signals fallback ────────────────────────────────
+    active_dca = [s for s in signals if s[0] in ("dca_small", "dca_medium", "dca_large")]
+    if not active_dca:
+        if golden_cross:
+            signals.append(("neutral", "⚪",
+                "Uptrend Active — No Oversold Entry Yet",
+                "Macro trend is bullish but no short-term oversold conditions. "
+                "Wait for a dip toward EMA 50 or RSI < 45 before adding."))
+        else:
+            signals.append(("neutral", "⚪",
+                "No High-Conviction Entry Signal",
+                "Market is in a downtrend without sufficient oversold confluence. "
+                "Wait for RSI < 35, Williams %R < -80, or proximity to the 200-week MA. "
+                "Patience is a position."))
+
+    # ── Conviction summary ────────────────────────────────────
+    if confluence >= 6:
+        conviction = "🔥 **HIGH CONVICTION DCA ZONE** — Multiple macro + momentum signals aligned. Rare setup historically associated with major lows."
+    elif confluence >= 4:
+        conviction = "🟡 **MODERATE CONVICTION** — Several signals aligned. Suitable for incremental DCA with smaller position sizes."
+    elif confluence >= 2:
+        conviction = "⚠️ **LOW CONVICTION** — Some signals present but insufficient confluence for high confidence. Small starter position only."
     else:
-        return "🔴 STRONG SELL"
+        conviction = "⏳ **WAIT** — No meaningful signal confluence. Preserve capital and monitor for developing setups."
+
+    return signals, conviction
 
 def delta_metric(col, label, val):
     if val is None:
@@ -478,8 +715,8 @@ if "alerts" not in st.session_state:
 # ── LOAD ALL DATA ──────────────────────────────────────────────
 
 with st.spinner("Loading price data..."):
-    market  = get_market_data(coin_id)
-    df      = get_ohlc_data(coin_id, days)
+    market = get_market_data(coin_id)
+    df     = get_ohlc_data(coin_id, days)
 
 with st.spinner("Loading global sentiment..."):
     fg_df                          = get_fear_greed()
@@ -511,27 +748,27 @@ label         = signal_label(score)
 
 ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 st.session_state.alerts.insert(0,
-    f"{ts} | {coin_label} ({timeframe}) | {bullish_count}/10 bullish | {label}")
+    f"{ts} | {coin_label} ({timeframe}) | Score: {score} | {label}")
 st.session_state.alerts = st.session_state.alerts[:30]
 
 # ── PRECOMPUTE DISPLAY VALUES ──────────────────────────────────
 
-rsi_val    = f"{latest['RSI']:.1f}"          if pd.notna(latest['RSI'])        else "N/A"
-stoch_val  = f"{latest['StochRSI_k']:.1f}"   if pd.notna(latest['StochRSI_k']) else "N/A"
-stochd_val = f"{latest['StochRSI_d']:.1f}"   if pd.notna(latest['StochRSI_d']) else "N/A"
-macd_val   = f"{latest['MACD']:.2f}"         if pd.notna(latest['MACD'])       else "N/A"
-msig_val   = f"{latest['MACD_signal']:.2f}"  if pd.notna(latest['MACD_signal'])else "N/A"
-mhst_val   = f"{latest['MACD_hist']:.2f}"    if pd.notna(latest['MACD_hist'])  else "N/A"
-bb_pct_val = f"{latest['BB_pct']*100:.0f}%"  if pd.notna(latest['BB_pct'])     else "N/A"
-ema50_val  = f"${latest['EMA_50']:,.2f}"      if pd.notna(latest['EMA_50'])     else "N/A"
-ema200_val = f"${latest['EMA_200']:,.2f}"     if pd.notna(latest['EMA_200'])    else "N/A"
-adx_val    = f"{latest['ADX']:.1f}"          if pd.notna(latest['ADX'])        else "N/A"
-dip_val    = f"{latest['ADX_pos']:.1f}"      if pd.notna(latest['ADX_pos'])    else "N/A"
-din_val    = f"{latest['ADX_neg']:.1f}"      if pd.notna(latest['ADX_neg'])    else "N/A"
-cci_val    = f"{latest['CCI']:.1f}"          if pd.notna(latest['CCI'])        else "N/A"
-wr_val     = f"{latest['WilliamsR']:.1f}"    if pd.notna(latest['WilliamsR'])  else "N/A"
-roc_val    = f"{latest['ROC']:.2f}%"         if pd.notna(latest['ROC'])        else "N/A"
-atr_val    = f"{latest['ATR']:.2f}"          if pd.notna(latest['ATR'])        else "N/A"
+rsi_val    = f"{latest['RSI']:.1f}"          if pd.notna(latest['RSI'])         else "N/A"
+stoch_val  = f"{latest['StochRSI_k']:.1f}"   if pd.notna(latest['StochRSI_k'])  else "N/A"
+stochd_val = f"{latest['StochRSI_d']:.1f}"   if pd.notna(latest['StochRSI_d'])  else "N/A"
+macd_val   = f"{latest['MACD']:.2f}"         if pd.notna(latest['MACD'])        else "N/A"
+msig_val   = f"{latest['MACD_signal']:.2f}"  if pd.notna(latest['MACD_signal']) else "N/A"
+mhst_val   = f"{latest['MACD_hist']:.2f}"    if pd.notna(latest['MACD_hist'])   else "N/A"
+bb_pct_val = f"{latest['BB_pct']*100:.0f}%"  if pd.notna(latest['BB_pct'])      else "N/A"
+ema50_val  = f"${latest['EMA_50']:,.2f}"      if pd.notna(latest['EMA_50'])      else "N/A"
+ema200_val = f"${latest['EMA_200']:,.2f}"     if pd.notna(latest['EMA_200'])     else "N/A"
+adx_val    = f"{latest['ADX']:.1f}"          if pd.notna(latest['ADX'])         else "N/A"
+dip_val    = f"{latest['ADX_pos']:.1f}"      if pd.notna(latest['ADX_pos'])     else "N/A"
+din_val    = f"{latest['ADX_neg']:.1f}"      if pd.notna(latest['ADX_neg'])     else "N/A"
+cci_val    = f"{latest['CCI']:.1f}"          if pd.notna(latest['CCI'])         else "N/A"
+wr_val     = f"{latest['WilliamsR']:.1f}"    if pd.notna(latest['WilliamsR'])   else "N/A"
+roc_val    = f"{latest['ROC']:.2f}%"         if pd.notna(latest['ROC'])         else "N/A"
+atr_val    = f"{latest['ATR']:.2f}"          if pd.notna(latest['ATR'])         else "N/A"
 
 # ── MARKET SENTIMENT BAR ──────────────────────────────────────
 
@@ -548,15 +785,14 @@ else:
     ms1.metric("😨 Fear & Greed", "N/A")
 
 if btc_dom:
-    dom_signal = ("🟢 BTC leading" if btc_dom > 55 else
-                  "🔴 Alts leading" if btc_dom < 45 else "⚪ Balanced")
+    dom_signal = "🟢 BTC leading" if btc_dom > 55 else "🔴 Alts leading" if btc_dom < 45 else "⚪ Balanced"
     ms2.metric("🟠 BTC Dominance", f"{btc_dom:.1f}%", delta=dom_signal)
 else:
     ms2.metric("🟠 BTC Dominance", "N/A")
 
 if alt_index:
-    alt_signal = "🔥 Alt season" if alt_index > 40 else "🥶 BTC season"
-    ms3.metric("🪙 Altcoin Market %", f"{alt_index:.1f}%", delta=alt_signal)
+    ms3.metric("🪙 Altcoin Market %", f"{alt_index:.1f}%",
+               delta="🔥 Alt season" if alt_index > 40 else "🥶 BTC season")
 else:
     ms3.metric("🪙 Altcoin Market %", "N/A")
 
@@ -579,7 +815,7 @@ col1, col2, col3, col4 = st.columns(4)
 col1.metric("📊 RSI (14)",     rsi_val)
 col2.metric("⚡ Stoch RSI",    stoch_val)
 col3.metric("📉 MACD Hist",    mhst_val)
-col4.metric("🎯 Signal Score", f"{bullish_count}/10 bullish")
+col4.metric("🎯 Signal Score", f"{score} pts · {bullish_count} bullish")
 
 st.markdown("#### 📊 Price Performance")
 p1, p2, p3, p4, p5 = st.columns(5)
@@ -599,13 +835,44 @@ mcap = market.get("market_cap")
 if vol:  v1.metric("💹 24h Volume", f"${vol/1e9:.2f}B")
 if mcap: v2.metric("🏦 Market Cap", f"${mcap/1e9:.1f}B")
 
-st.caption(f"⏱ Price last updated: {ts} · Indicators refresh every 10 min · Long-term data refreshes daily")
+st.caption(f"⏱ Price last updated: {ts} · Indicators: 10 min · Long-term data: daily")
 
+st.divider()
+
+# ── DCA COMMENTARY ────────────────────────────────────────────
+
+commentary_signals, conviction_summary = generate_commentary(
+    latest, df_btc_long, df_long, price)
+
+st.markdown("### 🧠 DCA Signal Analysis")
+st.markdown(conviction_summary)
+st.markdown("")
+
+color_map = {
+    "dca_large":  "#22c55e",
+    "dca_medium": "#86efac",
+    "dca_small":  "#fbbf24",
+    "bullish":    "#60a5fa",
+    "bearish":    "#f87171",
+    "neutral":    "#9ca3af",
+}
+
+for level, emoji, title, detail in commentary_signals:
+    color = color_map.get(level, "#9ca3af")
+    st.markdown(
+        f"""<div style='border-left: 4px solid {color}; padding: 10px 16px;
+        margin-bottom: 12px; background: rgba(255,255,255,0.03); border-radius: 4px;'>
+        <strong style='color:{color}'>{emoji} {title}</strong><br>
+        <span style='font-size:0.9rem; color:#d1d5db'>{detail}</span>
+        </div>""",
+        unsafe_allow_html=True)
+
+st.caption("⚠️ Not financial advice. All signals are algorithmic and based on historical patterns. Always do your own research.")
 st.divider()
 
 # ── SIGNAL BREAKDOWN ──────────────────────────────────────────
 
-with st.expander("📋 All 10 Indicators — Signal Breakdown (click to expand)", expanded=True):
+with st.expander("📋 All 10 Indicators — Signal Breakdown", expanded=True):
     bullish_list = [(n, d) for n, s, e, d in indicators if s > 0]
     neutral_list = [(n, d) for n, s, e, d in indicators if s == 0]
     bearish_list = [(n, d) for n, s, e, d in indicators if s < 0]
@@ -652,8 +919,8 @@ fig1.add_hline(y=80, line_dash="dash", line_color="red",  row=2, col=1)
 fig1.add_hline(y=20, line_dash="dash", line_color="lime", row=2, col=1)
 fig1.update_layout(height=600)
 st.plotly_chart(fig1, use_container_width=True)
-st.caption("📊 RSI: Below 30 = strongly oversold (🟢 Strong Buy); below 40 = buy zone; above 70 = overbought (🔴 Sell).")
-st.caption("⚡ Stoch RSI: K line below 20 = reversal up likely (🟢); above 80 = reversal down likely (🔴).")
+st.caption("📊 RSI: Below 30 = strongly oversold (🟢); below 40 = buy zone; above 70 = overbought (🔴).")
+st.caption("⚡ Stoch RSI: K below 20 = reversal up likely (🟢); above 80 = reversal down likely (🔴).")
 
 st.divider()
 
@@ -679,20 +946,32 @@ fig2.add_trace(go.Scatter(x=df["time"], y=df["EMA_50"],
     name="EMA 50", line=dict(color="#34D399", width=1.5)))
 fig2.add_trace(go.Scatter(x=df["time"], y=df["EMA_200"],
     name="EMA 200", line=dict(color="#F87171", width=1.5)))
-support, resistance = detect_support_resistance(df)
-for s in support:
-    fig2.add_hline(y=s, line_dash="dot", line_color="lime", opacity=0.6,
+
+# Short-term S/R from OHLC
+support_short, resistance_short = detect_support_resistance(df)
+for s in support_short:
+    fig2.add_hline(y=s, line_dash="dot", line_color="lime", opacity=0.5,
                    annotation_text=f"S ${s:,.2f}", annotation_position="bottom left")
-for r in resistance:
-    fig2.add_hline(y=r, line_dash="dot", line_color="tomato", opacity=0.6,
+for r in resistance_short:
+    fig2.add_hline(y=r, line_dash="dot", line_color="tomato", opacity=0.5,
                    annotation_text=f"R ${r:,.2f}", annotation_position="top left")
+
+# Major S/R from long history — thicker lines
+major_sup, major_res = detect_major_sr_zones(df_long, price)
+for s in major_sup:
+    fig2.add_hline(y=s, line_dash="dash", line_color="#22c55e", opacity=0.7,
+                   annotation_text=f"Major S ${s:,.2f}", annotation_position="bottom right")
+for r in major_res:
+    fig2.add_hline(y=r, line_dash="dash", line_color="#f87171", opacity=0.7,
+                   annotation_text=f"Major R ${r:,.2f}", annotation_position="top right")
+
 fig2.update_layout(
     title=f"{coin_ticker} Price + BB + EMA + S/R — {timeframe}",
-    height=650, xaxis_rangeslider_visible=False)
+    height=700, xaxis_rangeslider_visible=False)
 st.plotly_chart(fig2, use_container_width=True)
 st.caption("📉 Bollinger Bands: Price below lower = oversold (🟢); above upper = overbought (🔴).")
 st.caption("📈 EMA 50 (green) / EMA 200 (red): Golden Cross = bullish (🟢). Death Cross = bearish (🔴).")
-st.caption("🟢 Support (green dotted) = price floors. 🔴 Resistance (red dotted) = price ceilings.")
+st.caption("🟢 Dotted = short-term S/R. Dashed = major long-term S/R zones from full price history.")
 
 st.divider()
 
@@ -740,7 +1019,7 @@ fig_adx.add_hline(y=20, line_dash="dash", line_color="gray")
 fig_adx.add_hline(y=40, line_dash="dash", line_color="white")
 fig_adx.update_layout(height=350)
 st.plotly_chart(fig_adx, use_container_width=True)
-st.caption("📡 ADX (purple): >20 = trend forming; >40 = strong. +DI above -DI = bullish (🟢). -DI above +DI = bearish (🔴). <20 = choppy.")
+st.caption("📡 ADX: >20 = trend forming; >40 = strong. +DI above -DI = bullish (🟢). -DI above +DI = bearish (🔴). <20 = choppy.")
 
 st.divider()
 
@@ -823,14 +1102,14 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
         name="ATR", line=dict(color="#C084FC", width=2)))
     fig_atr.update_layout(height=300)
     st.plotly_chart(fig_atr, use_container_width=True)
-    st.caption("📏 ATR: Rising = increasing volatility. Falling = calming. Use for stop-loss sizing — place stops 1.5–2× ATR from entry.")
+    st.caption("📏 ATR: Rising = increasing volatility. Use for stop-loss sizing — place stops 1.5–2× ATR from entry.")
 
     st.divider()
 
     sq_val   = "ON 🔒" if latest["squeeze"] else "OFF 🔓"
     sq_color = "red"   if latest["squeeze"] else "lime"
     st.markdown(
-        f"#### 🔫 TTM Squeeze — Momentum Buildup &nbsp;&nbsp; "
+        f"#### 🔫 TTM Squeeze &nbsp;&nbsp; "
         f"{val_span('Squeeze: ' + sq_val, sq_color)}",
         unsafe_allow_html=True)
     squeeze_colors = ["green" if v >= 0 else "red" for v in df["squeeze_hist"].fillna(0)]
@@ -843,13 +1122,12 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
         name="Squeeze (black=on, lime=off)"))
     fig_sq.update_layout(height=350)
     st.plotly_chart(fig_sq, use_container_width=True)
-    st.caption("🔫 TTM Squeeze: Black dots = coiling for big move. Lime = move released. Green bars = bullish momentum; red = bearish.")
+    st.caption("🔫 Black dots = coiling. Lime = released. Green bars = bullish momentum; red = bearish.")
 
     st.divider()
 
     if st.session_state.advanced_loaded:
 
-        # Pi Cycle — BTC only
         st.markdown("#### 🔄 Pi Cycle Top Indicator (BTC Daily — Max History)")
         if not df_btc_long.empty and len(df_btc_long) >= 111:
             df_pi = compute_pi_cycle(df_btc_long)
@@ -867,20 +1145,17 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
                 st.plotly_chart(fig_pi, use_container_width=True)
                 last_pi = df_pi.iloc[-1]
                 if pd.notna(last_pi.get("MA_350x2")):
-                    gap_pct = ((last_pi["MA_111"] - last_pi["MA_350x2"]) / last_pi["MA_350x2"]) * 100
+                    gap_pct = ((last_pi["MA_350x2"] - last_pi["MA_111"]) / last_pi["MA_350x2"]) * 100
                     if last_pi["MA_111"] >= last_pi["MA_350x2"]:
-                        st.markdown("⚠️ **Pi Cycle TOP signal ACTIVE** — 111-day MA crossed above 2× 350-day MA.")
+                        st.markdown("⚠️ **Pi Cycle TOP signal ACTIVE** — historically marks cycle tops.")
                     else:
-                        st.markdown(f"✅ **No Pi Cycle top signal.** 111-day MA is {abs(gap_pct):.1f}% below the 2× 350-day MA.")
+                        st.markdown(f"✅ **No Pi Cycle top.** 111-day MA is {gap_pct:.1f}% below 2× 350-day MA.")
                 else:
                     st.markdown("⏳ 350-day MA still building.")
-        else:
-            st.info("Not enough data for Pi Cycle.")
-        st.caption("🔄 Pi Cycle Top: When 111-day MA crosses above 2× 350-day MA it has historically marked BTC cycle tops. SELL signal only.")
+        st.caption("🔄 When 111-day MA crosses above 2× 350-day MA = historical BTC cycle top signal.")
 
         st.divider()
 
-        # 200-week MA — BTC only
         st.markdown("#### 📅 200-Week Moving Average (BTC Bear Market Floor)")
         if not df_btc_long.empty and len(df_btc_long) >= 200:
             df_w       = compute_200w_ma(df_btc_long)
@@ -904,28 +1179,21 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
                 fig_200w.update_layout(height=400, title="BTC Price vs 200-Week MA")
                 st.plotly_chart(fig_200w, use_container_width=True)
                 if pct_above < 0:
-                    st.markdown(f"🟢 **BTC is {abs(pct_above):.1f}% BELOW the 200-week MA (${current_200w:,.0f})** — historically a generational buy zone.")
+                    st.markdown(f"🟢 **BTC is {abs(pct_above):.1f}% BELOW the 200-week MA (${current_200w:,.0f})** — generational buy zone.")
                 else:
                     st.markdown(f"📊 BTC is **{pct_above:.1f}% above** the 200-week MA (${current_200w:,.0f}).")
-            else:
-                st.info("200-week MA still computing.")
-        else:
-            st.info("Not enough data for 200-week MA.")
-        st.caption("📅 200-Week MA: Every major BTC bear market bottom has been at or near this line. Price below = generational buy opportunity.")
+        st.caption("📅 Every major BTC bear market bottom has been at or near the 200-week MA.")
 
     else:
-        st.info("👆 Click 'Load Advanced Data' above to render Pi Cycle and 200-Week MA charts.")
+        st.info("👆 Click 'Load Advanced Data' above to render Pi Cycle and 200-Week MA.")
 
     st.divider()
 
-    st.markdown("#### 😨 Fear & Greed Index — 30 Day History")
+    st.markdown("#### 😨 Fear & Greed — 30 Day History")
     if not fg_df.empty:
         fg_colors = [
-            "red"       if v > 75 else
-            "orange"    if v > 55 else
-            "gray"      if v > 45 else
-            "lightblue" if v > 25 else
-            "lime"
+            "red" if v > 75 else "orange" if v > 55 else
+            "gray" if v > 45 else "lightblue" if v > 25 else "lime"
             for v in fg_df["value"]
         ]
         fig_fg = go.Figure()
@@ -935,19 +1203,16 @@ with st.expander("🔬 Advanced Analysis (click to expand)", expanded=False):
         fig_fg.add_hline(y=25, line_dash="dash", line_color="lime", annotation_text="Extreme Fear")
         fig_fg.update_layout(height=350, yaxis_range=[0, 100])
         st.plotly_chart(fig_fg, use_container_width=True)
-    else:
-        st.info("Fear & Greed data unavailable.")
     st.caption("😨 0 = Extreme Fear (historically good buy), 100 = Extreme Greed (historically good sell).")
 
 # ── ALERT HISTORY ─────────────────────────────────────────────
 
 st.divider()
 st.markdown("#### 🔔 Alert History (this session)")
-if st.session_state.alerts:
-    for alert in st.session_state.alerts:
-        st.markdown(f"- {alert}")
-else:
+for alert in st.session_state.alerts:
+    st.markdown(f"- {alert}")
+if not st.session_state.alerts:
     st.info("No alerts yet.")
 st.caption("🔔 Logged each refresh. Resets on app restart.")
 
-st.caption(f"Data: CoinGecko · CryptoCompare · alternative.me · Price auto-refreshes every 60s · Last run: {ts}")
+st.caption(f"Data: CoinGecko · CryptoCompare · alternative.me · Auto-refreshes every 60s · Last run: {ts}")
