@@ -9,7 +9,6 @@ from datetime import datetime, date, timedelta
 from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(layout="wide", page_title="ASX Stock Dashboard")
-
 st_autorefresh(interval=300_000, key="asx_refresh")
 
 st.markdown("""
@@ -62,15 +61,8 @@ range_option = st.sidebar.selectbox(
     ["3 Months", "6 Months", "1 Year", "2 Years", "3 Years", "5 Years", "Custom"],
     index=3
 )
-
-range_map = {
-    "3 Months": 90,
-    "6 Months": 180,
-    "1 Year":   365,
-    "2 Years":  730,
-    "3 Years":  1095,
-    "5 Years":  1825,
-}
+range_map = {"3 Months": 90, "6 Months": 180, "1 Year": 365,
+             "2 Years": 730, "3 Years": 1095, "5 Years": 1825}
 
 if range_option == "Custom":
     col_s, col_e = st.sidebar.columns(2)
@@ -119,8 +111,7 @@ def get_stock_data(ticker, start_date, end_date, interval):
         if df.empty:
             return pd.DataFrame()
         df = df.reset_index()
-        df.columns = [c[0].lower() if isinstance(c, tuple) else c.lower()
-                      for c in df.columns]
+        df.columns = [c[0].lower() if isinstance(c, tuple) else c.lower() for c in df.columns]
         df = df.rename(columns={"date": "time", "datetime": "time"})
         for col in ["open", "high", "low", "close"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -193,7 +184,6 @@ def compute_supertrend(df, period, multiplier):
     basic_upper = (hl_avg + multiplier * atr).values.copy()
     basic_lower = (hl_avg - multiplier * atr).values.copy()
     close       = df["close"].values
-
     final_upper = basic_upper.copy()
     final_lower = basic_lower.copy()
     supertrend  = np.full(len(df), np.nan)
@@ -202,25 +192,18 @@ def compute_supertrend(df, period, multiplier):
     for i in range(1, len(df)):
         if np.isnan(atr.iloc[i]):
             continue
-
-        # upper band: only moves down (tightens resistance)
         if basic_upper[i] < final_upper[i-1] or close[i-1] > final_upper[i-1]:
             final_upper[i] = basic_upper[i]
         else:
             final_upper[i] = final_upper[i-1]
-
-        # lower band: only moves up (tightens support)
         if basic_lower[i] > final_lower[i-1] or close[i-1] < final_lower[i-1]:
             final_lower[i] = basic_lower[i]
         else:
             final_lower[i] = final_lower[i-1]
-
-        # flip direction based on previous direction
         if direction[i-1] == 1:
             direction[i] = -1 if close[i] < final_lower[i] else 1
         else:
             direction[i] = 1 if close[i] > final_upper[i] else -1
-
         supertrend[i] = final_lower[i] if direction[i] == 1 else final_upper[i]
 
     return pd.Series(supertrend, index=df.index), pd.Series(direction, index=df.index)
@@ -231,28 +214,217 @@ def triple_supertrend_signals(df):
     df["st1"], df["dir1"] = compute_supertrend(df, period=7,  multiplier=3.0)
     df["st2"], df["dir2"] = compute_supertrend(df, period=14, multiplier=2.0)
     df["st3"], df["dir3"] = compute_supertrend(df, period=21, multiplier=1.0)
-
     df["buy_signal"]  = None
     df["sell_signal"] = None
-
     for i in range(1, len(df)):
-        c  = df["close"].iloc[i]
-        pc = df["close"].iloc[i-1]
-        s1, s2, s3 = df["st1"].iloc[i], df["st2"].iloc[i], df["st3"].iloc[i]
-        p1, p2, p3 = df["st1"].iloc[i-1], df["st2"].iloc[i-1], df["st3"].iloc[i-1]
-        d1, d2, d3 = df["dir1"].iloc[i], df["dir2"].iloc[i], df["dir3"].iloc[i]
+        d1, d2, d3   = df["dir1"].iloc[i], df["dir2"].iloc[i], df["dir3"].iloc[i]
         pd1, pd2, pd3 = df["dir1"].iloc[i-1], df["dir2"].iloc[i-1], df["dir3"].iloc[i-1]
-
-        # signal fires on direction change
-        cross_up = (d1 == 1 and pd1 == -1) or (d2 == 1 and pd2 == -1) or (d3 == 1 and pd3 == -1)
-        cross_dn = (d1 == -1 and pd1 == 1) or (d2 == -1 and pd2 == 1) or (d3 == -1 and pd3 == 1)
-
+        c = df["close"].iloc[i]
+        cross_up = (d1==1 and pd1==-1) or (d2==1 and pd2==-1) or (d3==1 and pd3==-1)
+        cross_dn = (d1==-1 and pd1==1) or (d2==-1 and pd2==1) or (d3==-1 and pd3==1)
         if cross_up:
             df.at[df.index[i], "buy_signal"]  = c
         if cross_dn:
             df.at[df.index[i], "sell_signal"] = c
-
     return df
+
+
+# ── CHART 1: Segment-by-segment coloured lines ────────────────
+
+def add_st_segments(fig, df, st_col, dir_col, bull_color, bear_color, name, show_legend=True):
+    x_vals  = df["time"].values
+    y_vals  = df[st_col].values
+    dirs    = df[dir_col].values
+    legend_bull_added = False
+    legend_bear_added = False
+    for i in range(1, len(df)):
+        if np.isnan(y_vals[i]) or np.isnan(y_vals[i-1]):
+            continue
+        is_bull = dirs[i] == 1
+        color   = bull_color if is_bull else bear_color
+        show_leg = False
+        if show_legend:
+            if is_bull and not legend_bull_added:
+                show_leg = True
+                legend_bull_added = True
+            elif not is_bull and not legend_bear_added:
+                show_leg = True
+                legend_bear_added = True
+        fig.add_trace(go.Scatter(
+            x=[x_vals[i-1], x_vals[i]],
+            y=[y_vals[i-1], y_vals[i]],
+            mode="lines",
+            line=dict(color=color, width=2),
+            name=f"{name} {'Bull' if is_bull else 'Bear'}" if show_leg else None,
+            showlegend=show_leg,
+            legendgroup=f"{name}_{'bull' if is_bull else 'bear'}",
+            hoverinfo="skip"
+        ))
+
+
+def build_chart1(df):
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"],
+        name="Price",
+        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
+
+    add_st_segments(fig, df, "st1", "dir1", "#34d399", "#f87171", "ST1(7,3.0)", show_legend=True)
+    add_st_segments(fig, df, "st2", "dir2", "#60a5fa", "#fb923c", "ST2(14,2.0)", show_legend=True)
+    add_st_segments(fig, df, "st3", "dir3", "#c084fc", "#f472b6", "ST3(21,1.0)", show_legend=True)
+
+    buy_df  = df[df["buy_signal"].notna()]
+    sell_df = df[df["sell_signal"].notna()]
+
+    fig.add_trace(go.Scatter(
+        x=buy_df["time"], y=buy_df["buy_signal"].astype(float) * 0.995,
+        mode="markers", name="Buy Signal",
+        marker=dict(symbol="triangle-up", size=12, color="#22c55e",
+                    line=dict(color="white", width=1))))
+    fig.add_trace(go.Scatter(
+        x=sell_df["time"], y=sell_df["sell_signal"].astype(float) * 1.005,
+        mode="markers", name="Sell Signal",
+        marker=dict(symbol="triangle-down", size=12, color="#ef4444",
+                    line=dict(color="white", width=1))))
+
+    fig.update_layout(
+        title="Triple Supertrend Chart 1",
+        height=600,
+        margin=dict(t=50, b=10),
+        xaxis_rangeslider_visible=False,
+        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)")
+    return fig
+
+
+# ── CHART 2: Nordman-style ─────────────────────────────────────
+# Green line below price (support) when bullish, red line above (resistance) when bearish
+# Candles coloured by how many STs are bullish
+# EMA 200 shown
+# Big arrows only when ALL 3 align AND Stoch RSI confirms
+
+def build_chart2(df):
+    fig = go.Figure()
+
+    # Background shading: green zone when all 3 bull, red zone when all 3 bear
+    all_bull = (df["dir1"] == 1) & (df["dir2"] == 1) & (df["dir3"] == 1)
+    all_bear = (df["dir1"] == -1) & (df["dir2"] == -1) & (df["dir3"] == -1)
+
+    def add_bg_zones(fig, df, mask, color):
+        in_zone = False
+        start   = None
+        for i, val in enumerate(mask):
+            if val and not in_zone:
+                in_zone = True
+                start   = df["time"].iloc[i]
+            elif not val and in_zone:
+                in_zone = False
+                fig.add_vrect(x0=start, x1=df["time"].iloc[i-1],
+                              fillcolor=color, opacity=0.08,
+                              layer="below", line_width=0)
+        if in_zone:
+            fig.add_vrect(x0=start, x1=df["time"].iloc[-1],
+                          fillcolor=color, opacity=0.08,
+                          layer="below", line_width=0)
+
+    add_bg_zones(fig, df, all_bull, "#22c55e")
+    add_bg_zones(fig, df, all_bear, "#ef4444")
+
+    # Candles coloured by bull count (3=bright green, 2=dim green, 1=dim red, 0=bright red)
+    def candle_color(row):
+        bulls = sum(1 for d in [row["dir1"], row["dir2"], row["dir3"]] if d == 1)
+        if   bulls == 3: return "#22c55e", "#22c55e"
+        elif bulls == 2: return "#86efac", "#86efac"
+        elif bulls == 1: return "#fca5a5", "#fca5a5"
+        else:            return "#ef4444", "#ef4444"
+
+    up_color   = []
+    down_color = []
+    for _, row in df.iterrows():
+        uc, dc = candle_color(row)
+        up_color.append(uc)
+        down_color.append(dc)
+
+    fig.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"],
+        name="Price",
+        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
+
+    # ST lines: only draw the ACTIVE side — green below when bull, red above when bear
+    # One trace per ST, show only the relevant (active) line per bar
+    st_configs = [
+        ("st1", "dir1", "#00e676", "#ff1744", "ST1 (7, 3.0)"),
+        ("st2", "dir2", "#00bcd4", "#ff9800", "ST2 (14, 2.0)"),
+        ("st3", "dir3", "#ce93d8", "#f06292", "ST3 (21, 1.0)"),
+    ]
+    for st_col, dir_col, bull_c, bear_c, label in st_configs:
+        add_st_segments(fig, df, st_col, dir_col, bull_c, bear_c, label, show_legend=True)
+
+    # EMA 200
+    if df["EMA_200"].notna().any():
+        fig.add_trace(go.Scatter(
+            x=df["time"], y=df["EMA_200"],
+            name="EMA 200",
+            line=dict(color="#fbbf24", width=2, dash="dot")))
+
+    # Big arrows: ALL 3 bullish + Stoch RSI K < 20 (oversold confirms long)
+    #             ALL 3 bearish + Stoch RSI K > 80 (overbought confirms short)
+    all3_bull_rows = df[(df["dir1"] == 1) & (df["dir2"] == 1) & (df["dir3"] == 1)]
+    all3_bear_rows = df[(df["dir1"] == -1) & (df["dir2"] == -1) & (df["dir3"] == -1)]
+
+    # Fire arrow only on the first bar of alignment (transition into all-3)
+    bull_align_starts = []
+    bear_align_starts = []
+    prev_bulls = prev_bears = False
+    for i, row in df.iterrows():
+        cur_bulls = (row["dir1"]==1 and row["dir2"]==1 and row["dir3"]==1)
+        cur_bears = (row["dir1"]==-1 and row["dir2"]==-1 and row["dir3"]==-1)
+        if cur_bulls and not prev_bulls:
+            bull_align_starts.append(i)
+        if cur_bears and not prev_bears:
+            bear_align_starts.append(i)
+        prev_bulls = cur_bulls
+        prev_bears = cur_bears
+
+    bull_signal_df = df.loc[bull_align_starts]
+    bear_signal_df = df.loc[bear_align_starts]
+
+    fig.add_trace(go.Scatter(
+        x=bull_signal_df["time"],
+        y=bull_signal_df["low"].astype(float) * 0.990,
+        mode="markers+text",
+        name="All 3 Bullish",
+        text=["▲"] * len(bull_signal_df),
+        textfont=dict(size=22, color="#00e676"),
+        marker=dict(symbol="triangle-up", size=18, color="#00e676",
+                    line=dict(color="white", width=1)),
+        textposition="bottom center"))
+
+    fig.add_trace(go.Scatter(
+        x=bear_signal_df["time"],
+        y=bear_signal_df["high"].astype(float) * 1.010,
+        mode="markers+text",
+        name="All 3 Bearish",
+        text=["▼"] * len(bear_signal_df),
+        textfont=dict(size=22, color="#ff1744"),
+        marker=dict(symbol="triangle-down", size=18, color="#ff1744",
+                    line=dict(color="white", width=1)),
+        textposition="top center"))
+
+    fig.update_layout(
+        title="Triple Supertrend Chart 2  (Nordman-style)",
+        height=650,
+        margin=dict(t=50, b=10),
+        xaxis_rangeslider_visible=False,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        plot_bgcolor="#0e1117",
+        paper_bgcolor="rgba(0,0,0,0)")
+    return fig
 
 
 def detect_trend_structure(df, window=3):
@@ -268,12 +440,9 @@ def detect_trend_structure(df, window=3):
         hl = lows_pts[-1]  > lows_pts[-2]
         lh = highs_pts[-1] < highs_pts[-2]
         ll = lows_pts[-1]  < lows_pts[-2]
-        if hh and hl:
-            return "🟢 Uptrend - Higher Highs & Higher Lows", "green"
-        elif lh and ll:
-            return "🔴 Downtrend - Lower Highs & Lower Lows", "red"
-        else:
-            return "⚪ Choppy - No clear structure", "gray"
+        if hh and hl:   return "🟢 Uptrend - Higher Highs & Higher Lows", "green"
+        elif lh and ll: return "🔴 Downtrend - Lower Highs & Lower Lows", "red"
+        else:           return "⚪ Choppy - No clear structure", "gray"
     return "⚪ Not enough swing points yet", "gray"
 
 
@@ -299,7 +468,6 @@ def detect_support_resistance(df, window=3, num_levels=4):
 def composite_score(row):
     indicators = []
     close = row["close"]
-
     rsi = row["RSI"]
     if pd.isna(rsi):
         indicators.append(("RSI (14)", 0, "N", "Neutral - not enough data"))
@@ -311,7 +479,6 @@ def composite_score(row):
         indicators.append(("RSI (14)", -1, "S", f"Overbought at {rsi:.1f}"))
     else:
         indicators.append(("RSI (14)", 0, "N", f"Neutral at {rsi:.1f}"))
-
     k = row["StochRSI_k"]
     if pd.isna(k):
         indicators.append(("Stoch RSI", 0, "N", "Neutral - not enough data"))
@@ -321,7 +488,6 @@ def composite_score(row):
         indicators.append(("Stoch RSI", -1, "S", f"Overbought at {k:.1f}"))
     else:
         indicators.append(("Stoch RSI", 0, "N", f"Neutral at {k:.1f}"))
-
     macd_val, macd_sig = row["MACD"], row["MACD_signal"]
     if pd.isna(macd_val) or pd.isna(macd_sig):
         indicators.append(("MACD", 0, "N", "Neutral - not enough data"))
@@ -329,7 +495,6 @@ def composite_score(row):
         indicators.append(("MACD", 1, "B", f"Bullish - MACD ({macd_val:.4f}) above signal ({macd_sig:.4f})"))
     else:
         indicators.append(("MACD", -1, "S", f"Bearish - MACD ({macd_val:.4f}) below signal ({macd_sig:.4f})"))
-
     bb_pct   = row["BB_pct"]
     bb_lower = row["BB_lower"]
     bb_upper = row["BB_upper"]
@@ -345,7 +510,6 @@ def composite_score(row):
         indicators.append(("Bollinger Bands", -1, "S", f"Near upper band ({bb_pct*100:.0f}%)"))
     else:
         indicators.append(("Bollinger Bands", 0, "N", f"Mid-band ({bb_pct*100:.0f}%)"))
-
     ema200 = row["EMA_200"]
     if pd.isna(ema200):
         indicators.append(("EMA 200 Trend", 0, "N", "Neutral - not enough data"))
@@ -353,7 +517,6 @@ def composite_score(row):
         indicators.append(("EMA 200 Trend", 2, "B", f"Price above EMA 200 (${ema200:,.4f})"))
     else:
         indicators.append(("EMA 200 Trend", -2, "S", f"Price below EMA 200 (${ema200:,.4f})"))
-
     ema50 = row["EMA_50"]
     if pd.isna(ema50) or pd.isna(ema200):
         indicators.append(("EMA 50/200 Cross", 0, "N", "Neutral - not enough data"))
@@ -361,7 +524,6 @@ def composite_score(row):
         indicators.append(("EMA 50/200 Cross", 2, "B", "Golden Cross - EMA 50 above EMA 200"))
     else:
         indicators.append(("EMA 50/200 Cross", -2, "S", "Death Cross - EMA 50 below EMA 200"))
-
     adx, adx_pos, adx_neg = row["ADX"], row["ADX_pos"], row["ADX_neg"]
     if pd.isna(adx):
         indicators.append(("ADX Strength", 0, "N", "Neutral - not enough data"))
@@ -371,7 +533,6 @@ def composite_score(row):
         indicators.append(("ADX Strength", 1, "B", f"ADX {adx:.1f} - bullish direction"))
     else:
         indicators.append(("ADX Strength", -1, "S", f"ADX {adx:.1f} - bearish direction"))
-
     cci = row["CCI"]
     if pd.isna(cci):
         indicators.append(("CCI (20)", 0, "N", "Neutral - not enough data"))
@@ -381,7 +542,6 @@ def composite_score(row):
         indicators.append(("CCI (20)", -1, "S", f"CCI {cci:.0f} - overbought"))
     else:
         indicators.append(("CCI (20)", 0, "N", f"CCI {cci:.0f} - neutral"))
-
     wr = row["WilliamsR"]
     if pd.isna(wr):
         indicators.append(("Williams %R", 0, "N", "Neutral - not enough data"))
@@ -391,7 +551,6 @@ def composite_score(row):
         indicators.append(("Williams %R", -1, "S", f"Williams %R {wr:.1f} - overbought"))
     else:
         indicators.append(("Williams %R", 0, "N", f"Williams %R {wr:.1f} - neutral"))
-
     roc = row["ROC"]
     if pd.isna(roc):
         indicators.append(("ROC (12)", 0, "N", "Neutral - not enough data"))
@@ -401,7 +560,6 @@ def composite_score(row):
         indicators.append(("ROC (12)", -1, "S", f"ROC {roc:.1f}% - strong negative momentum"))
     else:
         indicators.append(("ROC (12)", 0, "N", f"ROC {roc:.1f}% - momentum flat"))
-
     bullish_count = sum(1 for _, s, _, _ in indicators if s > 0)
     bearish_count = sum(1 for _, s, _, _ in indicators if s < 0)
     net_score     = sum(s for _, s, _, _ in indicators)
@@ -409,16 +567,11 @@ def composite_score(row):
 
 
 def signal_label(score):
-    if score >= 7:
-        return "🟢 STRONG BUY"
-    elif score >= 3:
-        return "🟡 WATCH / ACCUMULATE"
-    elif score >= -2:
-        return "⚪ HOLD / NEUTRAL"
-    elif score >= -5:
-        return "🟠 CAUTION / REDUCE"
-    else:
-        return "🔴 STRONG SELL / AVOID"
+    if score >= 7:   return "🟢 STRONG BUY"
+    elif score >= 3: return "🟡 WATCH / ACCUMULATE"
+    elif score >= -2:return "⚪ HOLD / NEUTRAL"
+    elif score >= -5:return "🟠 CAUTION / REDUCE"
+    else:            return "🔴 STRONG SELL / AVOID"
 
 
 def swing_trade_commentary(row, df, ticker, price, score, info):
@@ -435,14 +588,10 @@ def swing_trade_commentary(row, df, ticker, price, score, info):
     squeeze   = row["squeeze"]
     week52_high = info.get("week52_high")
     week52_low  = info.get("week52_low")
-
     support_levels, resistance_levels = detect_support_resistance(df)
     nearest_support    = max([s for s in support_levels if s < price], default=price * 0.92)
     nearest_resistance = min([r for r in resistance_levels if r > price], default=price * 1.10)
-
     signals = []
-    setup   = "none"
-
     golden_cross   = pd.notna(ema50) and pd.notna(ema200) and ema50 > ema200
     death_cross    = pd.notna(ema50) and pd.notna(ema200) and ema50 < ema200
     above_ema200   = pd.notna(ema200) and price > ema200
@@ -460,91 +609,58 @@ def swing_trade_commentary(row, df, ticker, price, score, info):
         stop   = nearest_support - atr * 0.5
         target = nearest_resistance
         rr     = (target - price) / (price - stop) if (price - stop) > 0 else 0
-        setup  = "pullback_buy"
-        signals.append((
-            "🟢 SWING BUY - Pullback in Uptrend",
-            f"Golden Cross active + price above EMA 200. RSI ({rsi:.1f}) has pulled back to oversold "
-            f"while MACD histogram turned positive - classic dip-buy in a healthy uptrend.",
-            f"Entry: ${price:,.4f} | Stop: ${stop:,.4f} (-{((price-stop)/price)*100:.1f}%) "
-            f"| Target: ${target:,.4f} (+{((target-price)/price)*100:.1f}%) | R:R {rr:.1f}x",
-            "green"
-        ))
+        signals.append(("🟢 SWING BUY - Pullback in Uptrend",
+            f"Golden Cross active + price above EMA 200. RSI ({rsi:.1f}) pulled back to oversold while MACD histogram positive.",
+            f"Entry: ${price:,.4f} | Stop: ${stop:,.4f} (-{((price-stop)/price)*100:.1f}%) | Target: ${target:,.4f} (+{((target-price)/price)*100:.1f}%) | R:R {rr:.1f}x",
+            "green"))
     elif rsi_extreme and wr_oversold and stoch_low:
         stop   = price - atr * 1.5
         target = ema50 if pd.notna(ema50) and ema50 > price else nearest_resistance
         rr     = (target - price) / (price - stop) if (price - stop) > 0 else 0
-        setup  = "oversold_reversal"
-        signals.append((
-            "🟡 SWING WATCH - Extreme Oversold Reversal",
-            f"Triple oversold confluence: RSI ({rsi:.1f}) below 30, Williams %R ({wr:.1f}) below -80, "
-            f"Stoch RSI K ({stoch_k:.1f}) below 20. High probability of a short-term bounce. "
-            f"{'Caution - Death Cross in effect, keep size small.' if death_cross else 'No Death Cross - more reliable signal.'}",
-            f"Entry: ${price:,.4f} | Stop: ${stop:,.4f} (-{((price-stop)/price)*100:.1f}%) "
-            f"| Target: ${target:,.4f} (+{((target-price)/price)*100:.1f}%) | R:R {rr:.1f}x",
-            "yellow"
-        ))
+        signals.append(("🟡 SWING WATCH - Extreme Oversold Reversal",
+            f"Triple oversold confluence: RSI ({rsi:.1f}), Williams %R ({wr:.1f}), Stoch K ({stoch_k:.1f}). {'Caution - Death Cross active.' if death_cross else 'No Death Cross - more reliable.'}",
+            f"Entry: ${price:,.4f} | Stop: ${stop:,.4f} (-{((price-stop)/price)*100:.1f}%) | Target: ${target:,.4f} (+{((target-price)/price)*100:.1f}%) | R:R {rr:.1f}x",
+            "yellow"))
     elif trending_up and macd_bullish and not rsi_overbought and squeeze == False:
         stop   = ema50 if pd.notna(ema50) else price - atr * 2
         target = nearest_resistance
         rr     = (target - price) / (price - stop) if (price - stop) > 0 else 0
-        setup  = "momentum_breakout"
-        signals.append((
-            "🟢 SWING BUY - Momentum Breakout",
-            f"TTM Squeeze released. ADX ({adx:.1f}) confirms strong trend with +DI ({adx_pos:.1f}) "
-            f"above -DI ({adx_neg:.1f}). MACD confirming. Trail stop rather than fixed target.",
-            f"Entry: ${price:,.4f} | Stop: ${stop:,.4f} (-{((price-stop)/price)*100:.1f}%) "
-            f"| First Target: ${target:,.4f} (+{((target-price)/price)*100:.1f}%) | R:R {rr:.1f}x",
-            "green"
-        ))
+        signals.append(("🟢 SWING BUY - Momentum Breakout",
+            f"TTM Squeeze released. ADX ({adx:.1f}) confirms strong trend, +DI ({adx_pos:.1f}) > -DI ({adx_neg:.1f}). MACD confirming.",
+            f"Entry: ${price:,.4f} | Stop: ${stop:,.4f} (-{((price-stop)/price)*100:.1f}%) | Target: ${target:,.4f} (+{((target-price)/price)*100:.1f}%) | R:R {rr:.1f}x",
+            "green"))
     elif death_cross and rsi_overbought and stoch_high:
-        setup = "overbought_short"
-        signals.append((
-            "🔴 CAUTION - Overbought in Downtrend",
-            f"Death Cross active + RSI ({rsi:.1f}) overbought + Stoch RSI K ({stoch_k:.1f}) above 80. "
-            f"High risk of reversal down. Not a long entry. Consider reducing existing position.",
+        signals.append(("🔴 CAUTION - Overbought in Downtrend",
+            f"Death Cross + RSI ({rsi:.1f}) overbought + Stoch K ({stoch_k:.1f}) above 80. High reversal risk.",
             "Watch for RSI to fall below 65 and MACD to cross bearish before reassessing.",
-            "red"
-        ))
+            "red"))
     else:
-        setup = "none"
         if score >= 0:
-            signals.append((
-                "⚪ NO CLEAR SWING SETUP - Leaning Neutral/Bullish",
-                f"Indicators mixed or consolidating. No high-conviction entry signal. "
-                f"{'Golden Cross backdrop - wait for dip to EMA 50 or RSI < 45.' if golden_cross else 'Watch for Golden Cross or oversold bounce to form a setup.'}",
-                "Monitor for RSI dip below 40 or TTM Squeeze firing to trigger entry.",
-                "gray"
-            ))
+            signals.append(("⚪ NO CLEAR SWING SETUP - Leaning Neutral/Bullish",
+                f"Indicators mixed. {'Golden Cross - wait for dip to EMA 50 or RSI < 45.' if golden_cross else 'Watch for Golden Cross or oversold bounce.'}",
+                "Monitor for RSI dip below 40 or TTM Squeeze firing.", "gray"))
         else:
-            signals.append((
-                "🟠 NO CLEAR SWING SETUP - Leaning Bearish",
-                f"More bearish signals than bullish but no clean reversal setup yet. "
-                f"{'Death Cross active - downtrend bias.' if death_cross else 'Trend weakening.'} "
-                f"Avoid new longs until RSI < 30 and MACD turns positive.",
-                "Wait for extreme oversold confluence before considering entry.",
-                "orange"
-            ))
+            signals.append(("🟠 NO CLEAR SWING SETUP - Leaning Bearish",
+                f"More bearish signals. {'Death Cross active.' if death_cross else 'Trend weakening.'} Avoid new longs until RSI < 30 and MACD turns positive.",
+                "Wait for extreme oversold confluence before considering entry.", "orange"))
 
     if week52_high and week52_low and week52_high != week52_low:
         pct_from_high = ((price - week52_high) / week52_high) * 100
         pct_from_low  = ((price - week52_low)  / week52_low)  * 100
         range_pos     = ((price - week52_low) / (week52_high - week52_low)) * 100
-        signals.append((
-            "📅 52-Week Range Context",
+        signals.append(("📅 52-Week Range Context",
             f"52w High: ${week52_high:,.4f} | 52w Low: ${week52_low:,.4f} | Position in range: {range_pos:.0f}%",
             f"Price is {abs(pct_from_high):.1f}% below 52w high and {abs(pct_from_low):.1f}% above 52w low. "
-            f"{'Near lows - potential value zone.' if range_pos < 30 else 'Near highs - higher risk for new entries.' if range_pos > 70 else 'Mid-range - no particular edge from price position alone.'}",
-            "blue"
-        ))
+            f"{'Near lows - potential value zone.' if range_pos < 30 else 'Near highs - higher risk.' if range_pos > 70 else 'Mid-range.'}",
+            "blue"))
 
-    signals.append((
-        "📏 ATR Volatility - Position Sizing",
-        f"ATR (14): ${atr:,.4f} | Stop at 1.5x ATR: ${atr*1.5:,.4f} | Stop at 2x ATR: ${atr*2:,.4f}",
-        f"For 1% portfolio risk at 1.5x ATR stop: position size approx {(0.01 / ((atr * 1.5) / price)) * 100:.1f}% of capital.",
-        "purple"
-    ))
-
-    return signals, setup
+    if pd.notna(atr):
+        atr_pct = (atr / price) * 100
+        signals.append(("📏 ATR Volatility - Position Sizing",
+            f"ATR (14): ${atr:,.4f} ({atr_pct:.1f}% of price) | Stop 1.5x: ${atr*1.5:,.4f} | Stop 2x: ${atr*2:,.4f}",
+            f"For 1% portfolio risk at 1.5x ATR stop: position size approx {(0.01 / ((atr * 1.5) / price)) * 100:.1f}% of capital.",
+            "purple"))
+    return signals
 
 
 # ── LOAD DATA ──────────────────────────────────────────────────
@@ -557,11 +673,7 @@ with st.spinner(f"Loading {ticker} data..."):
 
 min_bars = 60 if interval == "1d" else 15
 if df.empty or len(df) < min_bars:
-    st.error(
-        f"Not enough data for {ticker} ({len(df) if not df.empty else 0} bars loaded). "
-        f"Try a wider date range or force refresh. "
-        f"Weekly charts need at least 1 year of data."
-    )
+    st.error(f"Not enough data for {ticker} ({len(df) if not df.empty else 0} bars). Try a wider range.")
     st.stop()
 
 df = compute_indicators(df)
@@ -582,9 +694,8 @@ score, bullish_count, bearish_count, indicators = composite_score(latest)
 neutral_count = 10 - bullish_count - bearish_count
 label         = signal_label(score)
 ts            = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-swing_signals, setup_type = swing_trade_commentary(latest, df, ticker, price, score, info)
-trend_label, trend_color  = detect_trend_structure(df, window=3)
+swing_signals = swing_trade_commentary(latest, df, ticker, price, score, info)
+trend_label, trend_color = detect_trend_structure(df, window=3)
 
 rsi_val    = f"{latest['RSI']:.1f}"          if pd.notna(latest['RSI'])         else "N/A"
 stoch_val  = f"{latest['StochRSI_k']:.1f}"   if pd.notna(latest['StochRSI_k'])  else "N/A"
@@ -604,7 +715,6 @@ roc_val    = f"{latest['ROC']:.2f}%"         if pd.notna(latest['ROC'])         
 atr_val    = f"${latest['ATR']:,.4f}"         if pd.notna(latest['ATR'])         else "N/A"
 sq_val     = "ON" if latest["squeeze"] else "OFF"
 sq_color   = "red" if latest["squeeze"] else "lime"
-
 is_swing_suitable = ticker in SWING_TRADE_SUITABLE
 
 # ── HEADER ─────────────────────────────────────────────────────
@@ -654,17 +764,10 @@ st.divider()
 # ── SWING TRADE ANALYSIS ───────────────────────────────────────
 
 st.markdown("### Swing Trade Analysis")
-
 signal_color_map = {
-    "green":  "#22c55e",
-    "yellow": "#fbbf24",
-    "red":    "#f87171",
-    "gray":   "#9ca3af",
-    "orange": "#f97316",
-    "blue":   "#60a5fa",
-    "purple": "#c084fc",
+    "green": "#22c55e", "yellow": "#fbbf24", "red": "#f87171",
+    "gray":  "#9ca3af", "orange": "#f97316", "blue": "#60a5fa", "purple": "#c084fc",
 }
-
 for title, detail, levels, color_key in swing_signals:
     color = signal_color_map.get(color_key, "#9ca3af")
     st.markdown(
@@ -676,7 +779,7 @@ for title, detail, levels, color_key in swing_signals:
         f"</div>",
         unsafe_allow_html=True)
 
-st.caption("Not financial advice. All signals are algorithmic. Confirm setups with volume and broader market context.")
+st.caption("Not financial advice. All signals are algorithmic. Confirm with volume and broader market context.")
 st.divider()
 
 with st.expander("All 10 Indicators - Signal Breakdown", expanded=False):
@@ -699,10 +802,9 @@ with st.expander("All 10 Indicators - Signal Breakdown", expanded=False):
 
 st.divider()
 
-# ── TRIPLE SUPERTREND ──────────────────────────────────────────
+# ── TRIPLE SUPERTREND STATUS ───────────────────────────────────
 
-st.markdown("### 📊 Triple Supertrend Crossover")
-
+st.markdown("### 📊 Triple Supertrend")
 bulls = sum(1 for d in [latest["dir1"], latest["dir2"], latest["dir3"]] if d == 1)
 bears = sum(1 for d in [latest["dir1"], latest["dir2"], latest["dir3"]] if d == -1)
 
@@ -721,82 +823,40 @@ st.markdown(
     unsafe_allow_html=True)
 
 if bulls == 3:
-    status_line("All 3 Supertrends bullish — solid lines below price, high-conviction long setup.", "strong_bullish")
+    status_line("All 3 Supertrends bullish — strong trend alignment, high-conviction long setup.", "strong_bullish")
 elif bulls == 2:
-    status_line("2 of 3 Supertrends bullish — trend leaning up but not fully aligned. Wait for ST3 (21,1) to confirm.", "bullish")
+    status_line("2 of 3 Supertrends bullish — leaning up, wait for ST3 (21,1) to confirm.", "bullish")
 elif bears == 3:
-    status_line("All 3 Supertrends bearish — dotted lines above price, strong downtrend, avoid new longs.", "strong_bearish")
+    status_line("All 3 Supertrends bearish — strong downtrend, avoid new longs.", "strong_bearish")
 elif bears == 2:
-    status_line("2 of 3 Supertrends bearish — trend leaning down, caution on long entries.", "bearish")
+    status_line("2 of 3 Supertrends bearish — leaning down, caution on long entries.", "bearish")
 else:
-    status_line("Supertrends conflicted — mixed directions, no clear edge, wait for alignment.", "neutral")
+    status_line("Supertrends conflicted — mixed directions, wait for alignment.", "neutral")
 
-fig_tst = go.Figure()
+# ── CHART 1 ────────────────────────────────────────────────────
 
-fig_tst.add_trace(go.Candlestick(
-    x=df["time"], open=df["open"], high=df["high"],
-    low=df["low"], close=df["close"],
-    name="Price",
-    increasing_line_color="#22c55e",
-    decreasing_line_color="#ef4444",
-    increasing_fillcolor="#22c55e",
-    decreasing_fillcolor="#ef4444"))
-
-st_configs = [
-    ("st1", "dir1", "ST1 (7, 3.0)",  "#34d399", "#f87171"),
-    ("st2", "dir2", "ST2 (14, 2.0)", "#60a5fa", "#fb923c"),
-    ("st3", "dir3", "ST3 (21, 1.0)", "#c084fc", "#f472b6"),
-]
-
-for st_col, dir_col, label, bull_color, bear_color in st_configs:
-    bull_idx = df[dir_col] == 1
-    bear_idx = df[dir_col] == -1
-    fig_tst.add_trace(go.Scatter(
-        x=df["time"][bull_idx], y=df[st_col][bull_idx],
-        name=f"{label} Bull", mode="lines",
-        line=dict(color=bull_color, width=2),
-        connectgaps=False))
-    fig_tst.add_trace(go.Scatter(
-        x=df["time"][bear_idx], y=df[st_col][bear_idx],
-        name=f"{label} Bear", mode="lines",
-        line=dict(color=bear_color, width=2, dash="dot"),
-        connectgaps=False))
-
-buy_df  = df[df["buy_signal"].notna()]
-sell_df = df[df["sell_signal"].notna()]
-
-fig_tst.add_trace(go.Scatter(
-    x=buy_df["time"],
-    y=buy_df["buy_signal"].astype(float) * 0.995,
-    mode="markers", name="Buy Signal",
-    marker=dict(symbol="triangle-up", size=14, color="#22c55e",
-                line=dict(color="white", width=1))))
-
-fig_tst.add_trace(go.Scatter(
-    x=sell_df["time"],
-    y=sell_df["sell_signal"].astype(float) * 1.005,
-    mode="markers", name="Sell Signal",
-    marker=dict(symbol="triangle-down", size=14, color="#ef4444",
-                line=dict(color="white", width=1))))
-
-fig_tst.update_layout(
-    height=600,
-    margin=dict(t=10, b=10),
-    xaxis_rangeslider_visible=False,
-    legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
-    plot_bgcolor="rgba(0,0,0,0)",
-    paper_bgcolor="rgba(0,0,0,0)")
-
-st.plotly_chart(fig_tst, use_container_width=True)
+fig1 = build_chart1(df)
+st.plotly_chart(fig1, use_container_width=True)
 st.caption(
-    "Solid lines below price = bullish (dynamic support). "
-    "Dotted lines above price = bearish (dynamic resistance). "
-    "Green ▲ = direction flipped bullish. Red ▼ = direction flipped bearish. "
-    "Best signals when all 3 lines agree.")
+    "**Triple Supertrend Chart 1** — Each ST line changes colour with direction: "
+    "green = bullish (dynamic support below price), red = bearish (dynamic resistance above price). "
+    "No ghost lines. Green ▲ = any ST flipped bullish. Red ▼ = any ST flipped bearish.")
 
 st.divider()
 
-# ── ROW 1: RSI + Stoch | Price + BB + EMA ─────────────────────
+# ── CHART 2 ────────────────────────────────────────────────────
+
+fig2 = build_chart2(df)
+st.plotly_chart(fig2, use_container_width=True)
+st.caption(
+    "**Triple Supertrend Chart 2 (Nordman-style)** — "
+    "Candle colour reflects ST alignment: bright green = 3/3 bull, light green = 2/3, light red = 1/3, bright red = 0/3. "
+    "Green background zone = all 3 bullish. Red background zone = all 3 bearish. "
+    "EMA 200 (yellow dotted). Large ▲/▼ arrows fire only when all 3 STs first align in the same direction.")
+
+st.divider()
+
+# ── RSI + Stoch ────────────────────────────────────────────────
 
 row1_l, row1_r = st.columns(2)
 
@@ -811,33 +871,33 @@ with row1_l:
     k_f   = latest["StochRSI_k"]
     if pd.notna(rsi_f) and pd.notna(k_f):
         if rsi_f < 30 and k_f < 20:
-            status_line(f"RSI {rsi_f:.1f} & Stoch K {k_f:.1f} — both deeply oversold, high probability bounce setup.", "strong_bullish")
+            status_line(f"RSI {rsi_f:.1f} & Stoch K {k_f:.1f} — both deeply oversold, high probability bounce.", "strong_bullish")
         elif rsi_f < 40:
-            status_line(f"RSI {rsi_f:.1f} — oversold territory, watching for Stoch K to confirm reversal.", "bullish")
+            status_line(f"RSI {rsi_f:.1f} — oversold, watching for Stoch K to confirm reversal.", "bullish")
         elif rsi_f > 70 and k_f > 80:
-            status_line(f"RSI {rsi_f:.1f} & Stoch K {k_f:.1f} — both overbought, elevated risk of pullback.", "strong_bearish")
+            status_line(f"RSI {rsi_f:.1f} & Stoch K {k_f:.1f} — both overbought, elevated pullback risk.", "strong_bearish")
         elif rsi_f > 70:
             status_line(f"RSI {rsi_f:.1f} — overbought, momentum may be fading.", "bearish")
         else:
-            status_line(f"RSI {rsi_f:.1f} & Stoch K {k_f:.1f} — neutral range, no strong momentum signal.", "neutral")
-    fig1 = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                         row_heights=[0.5, 0.5],
-                         subplot_titles=("RSI (14)", "Stochastic RSI"))
-    fig1.add_trace(go.Scatter(x=df["time"], y=df["RSI"],
+            status_line(f"RSI {rsi_f:.1f} & Stoch K {k_f:.1f} — neutral range.", "neutral")
+    fig_rsi = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                            row_heights=[0.5, 0.5],
+                            subplot_titles=("RSI (14)", "Stochastic RSI"))
+    fig_rsi.add_trace(go.Scatter(x=df["time"], y=df["RSI"],
         name="RSI", line=dict(color="#F59E0B", width=2)), row=1, col=1)
-    fig1.add_hline(y=70, line_dash="dash", line_color="red",   row=1, col=1)
-    fig1.add_hline(y=40, line_dash="dash", line_color="green", row=1, col=1)
-    fig1.add_hline(y=30, line_dash="dash", line_color="lime",  row=1, col=1)
-    fig1.add_hrect(y0=0,  y1=30,  fillcolor="green", opacity=0.05, row=1, col=1)
-    fig1.add_hrect(y0=70, y1=100, fillcolor="red",   opacity=0.05, row=1, col=1)
-    fig1.add_trace(go.Scatter(x=df["time"], y=df["StochRSI_k"],
+    fig_rsi.add_hline(y=70, line_dash="dash", line_color="red",   row=1, col=1)
+    fig_rsi.add_hline(y=40, line_dash="dash", line_color="green", row=1, col=1)
+    fig_rsi.add_hline(y=30, line_dash="dash", line_color="lime",  row=1, col=1)
+    fig_rsi.add_hrect(y0=0,  y1=30,  fillcolor="green", opacity=0.05, row=1, col=1)
+    fig_rsi.add_hrect(y0=70, y1=100, fillcolor="red",   opacity=0.05, row=1, col=1)
+    fig_rsi.add_trace(go.Scatter(x=df["time"], y=df["StochRSI_k"],
         name="Stoch K", line=dict(color="#60A5FA", width=2)), row=2, col=1)
-    fig1.add_trace(go.Scatter(x=df["time"], y=df["StochRSI_d"],
+    fig_rsi.add_trace(go.Scatter(x=df["time"], y=df["StochRSI_d"],
         name="Stoch D", line=dict(color="#F472B6", width=1, dash="dot")), row=2, col=1)
-    fig1.add_hline(y=80, line_dash="dash", line_color="red",  row=2, col=1)
-    fig1.add_hline(y=20, line_dash="dash", line_color="lime", row=2, col=1)
-    fig1.update_layout(height=500, margin=dict(t=30, b=10))
-    st.plotly_chart(fig1, use_container_width=True)
+    fig_rsi.add_hline(y=80, line_dash="dash", line_color="red",  row=2, col=1)
+    fig_rsi.add_hline(y=20, line_dash="dash", line_color="lime", row=2, col=1)
+    fig_rsi.update_layout(height=500, margin=dict(t=30, b=10))
+    st.plotly_chart(fig_rsi, use_container_width=True)
     st.caption("RSI <30 = strongly oversold; >70 = overbought. Stoch K <20 = reversal up likely.")
 
 with row1_r:
@@ -854,46 +914,46 @@ with row1_r:
         cross      = "Golden Cross" if (pd.notna(e50) and e50 > e200) else "Death Cross"
         cross_sent = "bullish" if "Golden" in cross else "bearish"
         if price < latest["BB_lower"]:
-            status_line(f"Price below lower BB — oversold. {cross} active on EMAs.", cross_sent)
+            status_line(f"Price below lower BB — oversold. {cross} active.", cross_sent)
         elif price > latest["BB_upper"]:
-            status_line(f"Price above upper BB — overbought. {cross} active on EMAs.", "bearish")
+            status_line(f"Price above upper BB — overbought. {cross} active.", "bearish")
         elif bb_f < 0.2:
-            status_line(f"Price near lower BB ({bb_f*100:.0f}%) — leaning oversold. {cross} on EMAs.", cross_sent)
+            status_line(f"Price near lower BB ({bb_f*100:.0f}%) — leaning oversold. {cross}.", cross_sent)
         elif bb_f > 0.8:
-            status_line(f"Price near upper BB ({bb_f*100:.0f}%) — extended. {cross} on EMAs.", "caution")
+            status_line(f"Price near upper BB ({bb_f*100:.0f}%) — extended. {cross}.", "caution")
         else:
-            status_line(f"Price mid-band ({bb_f*100:.0f}%), {cross} active — no edge from BB position.", cross_sent)
+            status_line(f"Price mid-band ({bb_f*100:.0f}%), {cross} active.", cross_sent)
     elif pd.notna(bb_f):
-        status_line("EMA 200 not available for this range — extend date range for EMA cross signal.", "neutral")
-    fig2 = go.Figure()
-    fig2.add_trace(go.Candlestick(
+        status_line("EMA 200 not available — extend date range for EMA cross signal.", "neutral")
+    fig_bb = go.Figure()
+    fig_bb.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
         low=df["low"], close=df["close"], name="Price"))
-    fig2.add_trace(go.Scatter(x=df["time"], y=df["BB_upper"],
+    fig_bb.add_trace(go.Scatter(x=df["time"], y=df["BB_upper"],
         name="BB Upper", line=dict(color="gray", dash="dot", width=1)))
-    fig2.add_trace(go.Scatter(x=df["time"], y=df["BB_lower"],
+    fig_bb.add_trace(go.Scatter(x=df["time"], y=df["BB_lower"],
         name="BB Lower", line=dict(color="gray", dash="dot", width=1),
         fill="tonexty", fillcolor="rgba(128,128,128,0.1)"))
-    fig2.add_trace(go.Scatter(x=df["time"], y=df["BB_mid"],
+    fig_bb.add_trace(go.Scatter(x=df["time"], y=df["BB_mid"],
         name="BB Mid", line=dict(color="gray", width=1)))
-    fig2.add_trace(go.Scatter(x=df["time"], y=df["EMA_50"],
+    fig_bb.add_trace(go.Scatter(x=df["time"], y=df["EMA_50"],
         name="EMA 50", line=dict(color="#34D399", width=1.5)))
-    fig2.add_trace(go.Scatter(x=df["time"], y=df["EMA_200"],
+    fig_bb.add_trace(go.Scatter(x=df["time"], y=df["EMA_200"],
         name="EMA 200", line=dict(color="#F87171", width=1.5)))
     support_s, resistance_s = detect_support_resistance(df)
     for s in support_s:
-        fig2.add_hline(y=s, line_dash="dot", line_color="lime", opacity=0.5,
-                       annotation_text=f"S ${s:,.4f}", annotation_position="bottom left")
+        fig_bb.add_hline(y=s, line_dash="dot", line_color="lime", opacity=0.5,
+                         annotation_text=f"S ${s:,.4f}", annotation_position="bottom left")
     for r in resistance_s:
-        fig2.add_hline(y=r, line_dash="dot", line_color="tomato", opacity=0.5,
-                       annotation_text=f"R ${r:,.4f}", annotation_position="top left")
-    fig2.update_layout(height=500, margin=dict(t=30, b=10), xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig2, use_container_width=True)
+        fig_bb.add_hline(y=r, line_dash="dot", line_color="tomato", opacity=0.5,
+                         annotation_text=f"R ${r:,.4f}", annotation_position="top left")
+    fig_bb.update_layout(height=500, margin=dict(t=30, b=10), xaxis_rangeslider_visible=False)
+    st.plotly_chart(fig_bb, use_container_width=True)
     st.caption("BB below lower = oversold; above upper = overbought. EMA50 (green) / EMA200 (red).")
 
 st.divider()
 
-# ── ROW 2: MACD | ADX ─────────────────────────────────────────
+# ── MACD + ADX ─────────────────────────────────────────────────
 
 row2_l, row2_r = st.columns(2)
 
@@ -909,28 +969,28 @@ with row2_l:
     ms = latest["MACD_signal"]
     if pd.notna(mh) and pd.notna(mv) and pd.notna(ms):
         if mv > ms and mh > 0:
-            status_line(f"MACD {mv:.4f} above signal, histogram positive — bullish momentum confirmed.", "bullish")
+            status_line(f"MACD above signal, histogram positive — bullish momentum confirmed.", "bullish")
         elif mv > ms and mh < 0:
-            status_line(f"MACD above signal but histogram shrinking — momentum weakening, watch closely.", "caution")
+            status_line(f"MACD above signal but histogram shrinking — momentum weakening.", "caution")
         elif mv < ms and mh < 0:
-            status_line(f"MACD {mv:.4f} below signal, histogram negative — bearish momentum in control.", "bearish")
+            status_line(f"MACD below signal, histogram negative — bearish momentum.", "bearish")
         else:
-            status_line(f"MACD crossing signal zone — potential momentum shift, wait for confirmation.", "caution")
-    fig3 = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                         row_heights=[0.45, 0.55],
-                         subplot_titles=("Price", "MACD"))
-    fig3.add_trace(go.Scatter(x=df["time"], y=df["close"],
+            status_line(f"MACD crossing signal — potential momentum shift, wait for confirmation.", "caution")
+    fig_macd = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                             row_heights=[0.45, 0.55],
+                             subplot_titles=("Price", "MACD"))
+    fig_macd.add_trace(go.Scatter(x=df["time"], y=df["close"],
         name="Price", line=dict(color="#F59E0B")), row=1, col=1)
-    fig3.add_trace(go.Scatter(x=df["time"], y=df["MACD"],
+    fig_macd.add_trace(go.Scatter(x=df["time"], y=df["MACD"],
         name="MACD", line=dict(color="#60A5FA", width=2)), row=2, col=1)
-    fig3.add_trace(go.Scatter(x=df["time"], y=df["MACD_signal"],
+    fig_macd.add_trace(go.Scatter(x=df["time"], y=df["MACD_signal"],
         name="Signal", line=dict(color="#F472B6", width=1.5)), row=2, col=1)
     colors_macd = ["green" if v >= 0 else "red" for v in df["MACD_hist"].fillna(0)]
-    fig3.add_trace(go.Bar(x=df["time"], y=df["MACD_hist"],
+    fig_macd.add_trace(go.Bar(x=df["time"], y=df["MACD_hist"],
         name="Histogram", marker_color=colors_macd), row=2, col=1)
-    fig3.update_layout(height=500, margin=dict(t=30, b=10))
-    st.plotly_chart(fig3, use_container_width=True)
-    st.caption("MACD above signal = bullish. Histogram turning green = momentum shift - key swing entry trigger.")
+    fig_macd.update_layout(height=500, margin=dict(t=30, b=10))
+    st.plotly_chart(fig_macd, use_container_width=True)
+    st.caption("MACD above signal = bullish. Histogram turning green = momentum shift.")
 
 with row2_r:
     st.markdown(
@@ -944,11 +1004,11 @@ with row2_r:
     dn    = latest["ADX_neg"]
     if pd.notna(adx_f) and pd.notna(dp) and pd.notna(dn):
         if adx_f < 20:
-            status_line(f"ADX {adx_f:.1f} — weak/no trend, choppy conditions. TA signals less reliable.", "neutral")
+            status_line(f"ADX {adx_f:.1f} — weak/no trend, choppy. TA signals less reliable.", "neutral")
         elif adx_f >= 25 and dp > dn:
-            status_line(f"ADX {adx_f:.1f} — strong trend confirmed, bullish direction (+DI {dp:.1f} > -DI {dn:.1f}).", "bullish")
+            status_line(f"ADX {adx_f:.1f} — strong trend, bullish direction (+DI {dp:.1f} > -DI {dn:.1f}).", "bullish")
         elif adx_f >= 25 and dn > dp:
-            status_line(f"ADX {adx_f:.1f} — strong trend confirmed, bearish direction (-DI {dn:.1f} > +DI {dp:.1f}).", "bearish")
+            status_line(f"ADX {adx_f:.1f} — strong trend, bearish direction (-DI {dn:.1f} > +DI {dp:.1f}).", "bearish")
         else:
             status_line(f"ADX {adx_f:.1f} — trend forming, direction not yet decisive.", "caution")
     fig_adx = go.Figure()
@@ -963,18 +1023,17 @@ with row2_r:
                       annotation_text="Trend threshold")
     fig_adx.update_layout(height=500, margin=dict(t=30, b=10))
     st.plotly_chart(fig_adx, use_container_width=True)
-    st.caption("ADX >25 = trending market. <20 = choppy - avoid breakout entries.")
+    st.caption("ADX >25 = trending market. <20 = choppy, avoid breakout entries.")
 
 st.divider()
 
-# ── ROW 3: CCI | Williams %R ───────────────────────────────────
+# ── CCI + Williams %R ──────────────────────────────────────────
 
 row3_l, row3_r = st.columns(2)
 
 with row3_l:
-    st.markdown(
-        f"<h4>CCI &nbsp;{val_span('CCI: ' + cci_val, '#F59E0B')}</h4>",
-        unsafe_allow_html=True)
+    st.markdown(f"<h4>CCI &nbsp;{val_span('CCI: ' + cci_val, '#F59E0B')}</h4>",
+                unsafe_allow_html=True)
     cci_f = latest["CCI"]
     if pd.notna(cci_f):
         if cci_f < -100:
@@ -982,9 +1041,9 @@ with row3_l:
         elif cci_f > 100:
             status_line(f"CCI {cci_f:.0f} — overbought above +100, consider tightening stops.", "bearish")
         elif cci_f < 0:
-            status_line(f"CCI {cci_f:.0f} — mildly negative, below centreline but not extreme.", "neutral")
+            status_line(f"CCI {cci_f:.0f} — mildly negative.", "neutral")
         else:
-            status_line(f"CCI {cci_f:.0f} — mildly positive, above centreline but not overbought.", "neutral")
+            status_line(f"CCI {cci_f:.0f} — mildly positive.", "neutral")
     fig_cci = go.Figure()
     fig_cci.add_trace(go.Scatter(x=df["time"], y=df["CCI"],
         name="CCI", line=dict(color="#F59E0B", width=2)))
@@ -994,20 +1053,19 @@ with row3_l:
     fig_cci.add_hrect(y0=100,  y1=300,  fillcolor="red",   opacity=0.05)
     fig_cci.update_layout(height=400, margin=dict(t=30, b=10))
     st.plotly_chart(fig_cci, use_container_width=True)
-    st.caption("CCI below -100 = oversold. Above +100 = overbought. Use for swing entry/exit timing.")
+    st.caption("CCI below -100 = oversold. Above +100 = overbought.")
 
 with row3_r:
-    st.markdown(
-        f"<h4>Williams %R &nbsp;{val_span('%R: ' + wr_val, '#60A5FA')}</h4>",
-        unsafe_allow_html=True)
+    st.markdown(f"<h4>Williams %R &nbsp;{val_span('%R: ' + wr_val, '#60A5FA')}</h4>",
+                unsafe_allow_html=True)
     wr_f = latest["WilliamsR"]
     if pd.notna(wr_f):
         if wr_f < -80:
-            status_line(f"Williams %R {wr_f:.1f} — oversold below -80, look for bounce confirmation.", "bullish")
+            status_line(f"Williams %R {wr_f:.1f} — oversold, look for bounce confirmation.", "bullish")
         elif wr_f > -20:
-            status_line(f"Williams %R {wr_f:.1f} — overbought above -20, elevated reversal risk.", "bearish")
+            status_line(f"Williams %R {wr_f:.1f} — overbought, elevated reversal risk.", "bearish")
         else:
-            status_line(f"Williams %R {wr_f:.1f} — neutral mid-range, no extreme reading.", "neutral")
+            status_line(f"Williams %R {wr_f:.1f} — neutral mid-range.", "neutral")
     fig_wr = go.Figure()
     fig_wr.add_trace(go.Scatter(x=df["time"], y=df["WilliamsR"],
         name="Williams %R", line=dict(color="#60A5FA", width=2)))
@@ -1017,30 +1075,29 @@ with row3_r:
     fig_wr.add_hrect(y0=-20,  y1=0,   fillcolor="red",   opacity=0.05)
     fig_wr.update_layout(height=400, margin=dict(t=30, b=10))
     st.plotly_chart(fig_wr, use_container_width=True)
-    st.caption("Williams %R below -80 = oversold. Above -20 = overbought. Fast-reacting - useful for swing timing.")
+    st.caption("Williams %R below -80 = oversold. Above -20 = overbought.")
 
 st.divider()
 
-# ── ROW 4: ROC | ATR ──────────────────────────────────────────
+# ── ROC + ATR ──────────────────────────────────────────────────
 
 row4_l, row4_r = st.columns(2)
 
 with row4_l:
-    st.markdown(
-        f"<h4>ROC - Rate of Change &nbsp;{val_span('ROC: ' + roc_val, '#F59E0B')}</h4>",
-        unsafe_allow_html=True)
+    st.markdown(f"<h4>ROC &nbsp;{val_span('ROC: ' + roc_val, '#F59E0B')}</h4>",
+                unsafe_allow_html=True)
     roc_f = latest["ROC"]
     if pd.notna(roc_f):
         if roc_f > 10:
-            status_line(f"ROC {roc_f:.1f}% — strong positive momentum, trend has real energy.", "strong_bullish")
+            status_line(f"ROC {roc_f:.1f}% — strong positive momentum.", "strong_bullish")
         elif roc_f > 5:
-            status_line(f"ROC {roc_f:.1f}% — positive momentum building above +5% threshold.", "bullish")
+            status_line(f"ROC {roc_f:.1f}% — positive momentum building.", "bullish")
         elif roc_f < -10:
-            status_line(f"ROC {roc_f:.1f}% — strong negative momentum, selling pressure dominant.", "strong_bearish")
+            status_line(f"ROC {roc_f:.1f}% — strong negative momentum.", "strong_bearish")
         elif roc_f < -5:
-            status_line(f"ROC {roc_f:.1f}% — negative momentum below -5%, caution on new longs.", "bearish")
+            status_line(f"ROC {roc_f:.1f}% — negative momentum, caution on new longs.", "bearish")
         else:
-            status_line(f"ROC {roc_f:.1f}% — momentum flat near zero, no directional conviction.", "neutral")
+            status_line(f"ROC {roc_f:.1f}% — momentum flat near zero.", "neutral")
     colors_roc = ["green" if v >= 0 else "red" for v in df["ROC"].fillna(0)]
     fig_roc = go.Figure()
     fig_roc.add_trace(go.Bar(x=df["time"], y=df["ROC"],
@@ -1053,47 +1110,45 @@ with row4_l:
     st.caption("ROC above +5% = strong positive momentum. Below -5% = strong negative momentum.")
 
 with row4_r:
-    st.markdown(
-        f"<h4>ATR - Volatility &nbsp;{val_span('ATR: ' + atr_val, '#C084FC')}</h4>",
-        unsafe_allow_html=True)
+    st.markdown(f"<h4>ATR &nbsp;{val_span('ATR: ' + atr_val, '#C084FC')}</h4>",
+                unsafe_allow_html=True)
     atr_f = latest["ATR"]
     if pd.notna(atr_f):
         atr_pct    = (atr_f / price) * 100
         recent_atr = df["ATR"].tail(20).mean()
         if atr_f > recent_atr * 1.2:
-            status_line(f"ATR ${atr_f:.4f} ({atr_pct:.1f}% of price) — volatility expanding, widen stops.", "caution")
+            status_line(f"ATR ${atr_f:.4f} ({atr_pct:.1f}%) — volatility expanding, widen stops.", "caution")
         elif atr_f < recent_atr * 0.8:
-            status_line(f"ATR ${atr_f:.4f} ({atr_pct:.1f}% of price) — volatility contracting, breakout may be near.", "caution")
+            status_line(f"ATR ${atr_f:.4f} ({atr_pct:.1f}%) — volatility contracting, breakout may be near.", "caution")
         else:
-            status_line(f"ATR ${atr_f:.4f} ({atr_pct:.1f}% of price) — normal volatility, use 1.5x ATR for stops.", "neutral")
+            status_line(f"ATR ${atr_f:.4f} ({atr_pct:.1f}%) — normal volatility, use 1.5x ATR for stops.", "neutral")
     fig_atr = go.Figure()
     fig_atr.add_trace(go.Scatter(x=df["time"], y=df["ATR"],
         name="ATR", line=dict(color="#C084FC", width=2)))
     fig_atr.update_layout(height=400, margin=dict(t=30, b=10))
     st.plotly_chart(fig_atr, use_container_width=True)
-    st.caption("ATR rising = increasing volatility. Size stops at 1.5-2x ATR. Expanding ATR on breakouts = confirmation.")
+    st.caption("ATR rising = increasing volatility. Size stops at 1.5-2x ATR.")
 
 st.divider()
 
-# ── ROW 5: TTM Squeeze | Volume ────────────────────────────────
+# ── TTM Squeeze + Volume ───────────────────────────────────────
 
 row5_l, row5_r = st.columns(2)
 
 with row5_l:
-    st.markdown(
-        f"<h4>TTM Squeeze &nbsp;{val_span('Squeeze: ' + sq_val, sq_color)}</h4>",
-        unsafe_allow_html=True)
+    st.markdown(f"<h4>TTM Squeeze &nbsp;{val_span('Squeeze: ' + sq_val, sq_color)}</h4>",
+                unsafe_allow_html=True)
     sq_f = latest["squeeze"]
     sh_f = latest["squeeze_hist"]
     if pd.notna(sq_f) and pd.notna(sh_f):
         if sq_f and sh_f > 0:
-            status_line("Squeeze ON — market coiling with bullish momentum building. Watch for release.", "caution")
+            status_line("Squeeze ON — coiling with bullish momentum building. Watch for release.", "caution")
         elif sq_f and sh_f < 0:
-            status_line("Squeeze ON — market coiling but bearish momentum. Release likely to be downside.", "caution")
+            status_line("Squeeze ON — coiling but bearish momentum. Release likely downside.", "caution")
         elif not sq_f and sh_f > 0:
-            status_line("Squeeze FIRED — momentum released to the upside. Breakout signal active.", "strong_bullish")
+            status_line("Squeeze FIRED — momentum released to the upside. Breakout signal.", "strong_bullish")
         elif not sq_f and sh_f < 0:
-            status_line("Squeeze FIRED — momentum released to the downside. Breakdown signal active.", "strong_bearish")
+            status_line("Squeeze FIRED — momentum released to the downside. Breakdown signal.", "strong_bearish")
     squeeze_colors = ["green" if v >= 0 else "red" for v in df["squeeze_hist"].fillna(0)]
     dot_colors     = ["black" if s else "lime" for s in df["squeeze"].fillna(False)]
     fig_sq = go.Figure()
@@ -1104,7 +1159,7 @@ with row5_l:
         name="Squeeze (black=on, lime=off)"))
     fig_sq.update_layout(height=400, margin=dict(t=30, b=10))
     st.plotly_chart(fig_sq, use_container_width=True)
-    st.caption("Black dots = coiling for breakout. Lime = released. Green bars after squeeze = bullish breakout signal.")
+    st.caption("Black dots = coiling for breakout. Lime = released. Green bars = bullish breakout signal.")
 
 with row5_r:
     st.markdown("<h4>Volume</h4>", unsafe_allow_html=True)
@@ -1114,13 +1169,13 @@ with row5_r:
         vol_ratio  = last_vol / avg_vol_20 if avg_vol_20 > 0 else 1
         up_day     = df["close"].iloc[-1] >= df["close"].iloc[-2]
         if vol_ratio > 1.5 and up_day:
-            status_line(f"Volume {vol_ratio:.1f}x above average on an up day — strong buying conviction.", "bullish")
+            status_line(f"Volume {vol_ratio:.1f}x above average on up day — strong buying conviction.", "bullish")
         elif vol_ratio > 1.5 and not up_day:
-            status_line(f"Volume {vol_ratio:.1f}x above average on a down day — strong selling pressure.", "bearish")
+            status_line(f"Volume {vol_ratio:.1f}x above average on down day — strong selling pressure.", "bearish")
         elif vol_ratio < 0.6:
-            status_line(f"Volume {vol_ratio:.1f}x below average — low conviction, be cautious of false moves.", "neutral")
+            status_line(f"Volume {vol_ratio:.1f}x below average — low conviction.", "neutral")
         else:
-            status_line(f"Volume {vol_ratio:.1f}x average — normal activity, no unusual conviction detected.", "neutral")
+            status_line(f"Volume {vol_ratio:.1f}x average — normal activity.", "neutral")
         vol_colors = ["green" if df["close"].iloc[i] >= df["open"].iloc[i] else "red"
                       for i in range(len(df))]
         avg_vol = df["volume"].rolling(20).mean()
@@ -1131,7 +1186,7 @@ with row5_r:
             name="20-period Avg", line=dict(color="#F59E0B", width=1.5, dash="dot")))
         fig_vol.update_layout(height=400, margin=dict(t=30, b=10))
         st.plotly_chart(fig_vol, use_container_width=True)
-        st.caption("Green = up day volume; red = down day volume. Volume above average on breakouts = confirmation.")
+        st.caption("Green = up day; red = down day. Volume above average on breakouts = confirmation.")
     else:
         st.info("Volume data not available.")
 
