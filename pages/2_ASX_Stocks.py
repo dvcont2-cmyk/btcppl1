@@ -1,6 +1,7 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import ta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -189,26 +190,30 @@ def compute_indicators(df):
 def compute_supertrend(df, period, multiplier):
     atr    = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=period).average_true_range()
     hl_avg = (df["high"] + df["low"]) / 2
-    upper_band = (hl_avg + multiplier * atr).copy()
-    lower_band = (hl_avg - multiplier * atr).copy()
 
-    supertrend = [float("nan")] * len(df)
-    direction  = [0] * len(df)
+    upper_band = (hl_avg + multiplier * atr).values.copy()
+    lower_band = (hl_avg - multiplier * atr).values.copy()
+    close      = df["close"].values
+    supertrend = np.full(len(df), np.nan)
+    direction  = np.zeros(len(df), dtype=int)
 
     for i in range(1, len(df)):
-        if pd.isna(atr.iloc[i]):
+        if np.isnan(atr.iloc[i]):
             continue
-        if lower_band.iloc[i] < lower_band.iloc[i-1]:
-            lower_band.iloc[i] = lower_band.iloc[i-1]
-        if upper_band.iloc[i] > upper_band.iloc[i-1]:
-            upper_band.iloc[i] = upper_band.iloc[i-1]
-        if df["close"].iloc[i] > upper_band.iloc[i-1]:
+
+        if lower_band[i] < lower_band[i-1]:
+            lower_band[i] = lower_band[i-1]
+        if upper_band[i] > upper_band[i-1]:
+            upper_band[i] = upper_band[i-1]
+
+        if close[i] > upper_band[i-1]:
             direction[i] = 1
-        elif df["close"].iloc[i] < lower_band.iloc[i-1]:
+        elif close[i] < lower_band[i-1]:
             direction[i] = -1
         else:
             direction[i] = direction[i-1]
-        supertrend[i] = lower_band.iloc[i] if direction[i] == 1 else upper_band.iloc[i]
+
+        supertrend[i] = lower_band[i] if direction[i] == 1 else upper_band[i]
 
     return pd.Series(supertrend, index=df.index), pd.Series(direction, index=df.index)
 
@@ -225,15 +230,17 @@ def triple_supertrend_signals(df):
     for i in range(1, len(df)):
         c  = df["close"].iloc[i]
         pc = df["close"].iloc[i-1]
+        s1, s2, s3 = df["st1"].iloc[i], df["st2"].iloc[i], df["st3"].iloc[i]
+        p1, p2, p3 = df["st1"].iloc[i-1], df["st2"].iloc[i-1], df["st3"].iloc[i-1]
         cross_up = (
-            (pc <= df["st1"].iloc[i-1] and c > df["st1"].iloc[i]) or
-            (pc <= df["st2"].iloc[i-1] and c > df["st2"].iloc[i]) or
-            (pc <= df["st3"].iloc[i-1] and c > df["st3"].iloc[i])
+            (not pd.isna(s1) and not pd.isna(p1) and pc <= p1 and c > s1) or
+            (not pd.isna(s2) and not pd.isna(p2) and pc <= p2 and c > s2) or
+            (not pd.isna(s3) and not pd.isna(p3) and pc <= p3 and c > s3)
         )
         cross_dn = (
-            (pc >= df["st1"].iloc[i-1] and c < df["st1"].iloc[i]) or
-            (pc >= df["st2"].iloc[i-1] and c < df["st2"].iloc[i]) or
-            (pc >= df["st3"].iloc[i-1] and c < df["st3"].iloc[i])
+            (not pd.isna(s1) and not pd.isna(p1) and pc >= p1 and c < s1) or
+            (not pd.isna(s2) and not pd.isna(p2) and pc >= p2 and c < s2) or
+            (not pd.isna(s3) and not pd.isna(p3) and pc >= p3 and c < s3)
         )
         if cross_up:
             df.at[df.index[i], "buy_signal"]  = c
@@ -535,20 +542,35 @@ def swing_trade_commentary(row, df, ticker, price, score, info):
     return signals, setup
 
 
+# ── LOAD DATA ──────────────────────────────────────────────────
+
 interval = "1d" if timeframe == "Daily" else "1wk"
 
 with st.spinner(f"Loading {ticker} data..."):
     df   = get_stock_data(ticker, date_start, date_end, interval)
     info = get_stock_info(ticker)
 
-if df.empty or len(df) < 30:
-    st.error(f"Not enough data for {ticker}. Try a wider date range or force refresh.")
+min_bars = 60 if interval == "1d" else 15
+if df.empty or len(df) < min_bars:
+    st.error(
+        f"Not enough data for {ticker} ({len(df) if not df.empty else 0} bars loaded). "
+        f"Try a wider date range or force refresh. "
+        f"Weekly charts need at least 1 year of data."
+    )
     st.stop()
 
-df     = compute_indicators(df)
-df     = df.dropna(subset=["RSI"]).reset_index(drop=True)
+df = compute_indicators(df)
+df = df.dropna(subset=["RSI"]).reset_index(drop=True)
+
+if df.empty:
+    st.error(f"Not enough bars after indicator calculation for {ticker}. Try a wider date range.")
+    st.stop()
+
 df     = triple_supertrend_signals(df)
 latest = df.iloc[-1]
+
+if pd.isna(latest["EMA_200"]) and interval == "1wk":
+    st.warning("⚠️ EMA 200 not available — extend range to 4+ years for full weekly indicator coverage.")
 
 price         = info.get("price") or float(latest["close"])
 score, bullish_count, bearish_count, indicators = composite_score(latest)
@@ -696,13 +718,13 @@ st.markdown(
 if bulls == 3:
     status_line("All 3 Supertrends bullish — strong trend alignment across all timeframes, high-conviction long setup.", "strong_bullish")
 elif bulls == 2:
-    status_line(f"2 of 3 Supertrends bullish — trend leaning up but not fully aligned. Wait for ST3 (21,1) to confirm.", "bullish")
+    status_line("2 of 3 Supertrends bullish — trend leaning up but not fully aligned. Wait for ST3 (21,1) to confirm.", "bullish")
 elif bears == 3:
     status_line("All 3 Supertrends bearish — strong downtrend alignment across all timeframes, avoid new longs.", "strong_bearish")
 elif bears == 2:
-    status_line(f"2 of 3 Supertrends bearish — trend leaning down, caution on long entries until alignment improves.", "bearish")
+    status_line("2 of 3 Supertrends bearish — trend leaning down, caution on long entries until alignment improves.", "bearish")
 else:
-    status_line("Supertrends conflicted (1 bull, 1 bear, 1 neutral) — no directional edge, stay out until clearer.", "neutral")
+    status_line("Supertrends conflicted — no directional edge, stay out until clearer alignment forms.", "neutral")
 
 fig_tst = go.Figure()
 
@@ -724,13 +746,11 @@ st_configs = [
 for st_col, dir_col, label, bull_color, bear_color in st_configs:
     bull_idx = df[dir_col] == 1
     bear_idx = df[dir_col] == -1
-
     fig_tst.add_trace(go.Scatter(
         x=df["time"][bull_idx], y=df[st_col][bull_idx],
         name=f"{label} Bull", mode="lines",
         line=dict(color=bull_color, width=2),
         connectgaps=False))
-
     fig_tst.add_trace(go.Scatter(
         x=df["time"][bear_idx], y=df[st_col][bear_idx],
         name=f"{label} Bear", mode="lines",
@@ -743,16 +763,14 @@ sell_df = df[df["sell_signal"].notna()]
 fig_tst.add_trace(go.Scatter(
     x=buy_df["time"],
     y=buy_df["buy_signal"].astype(float) * 0.995,
-    mode="markers",
-    name="Buy Signal",
+    mode="markers", name="Buy Signal",
     marker=dict(symbol="triangle-up", size=14, color="#22c55e",
                 line=dict(color="white", width=1))))
 
 fig_tst.add_trace(go.Scatter(
     x=sell_df["time"],
     y=sell_df["sell_signal"].astype(float) * 1.005,
-    mode="markers",
-    name="Sell Signal",
+    mode="markers", name="Sell Signal",
     marker=dict(symbol="triangle-down", size=14, color="#ef4444",
                 line=dict(color="white", width=1))))
 
@@ -766,13 +784,15 @@ fig_tst.update_layout(
 
 st.plotly_chart(fig_tst, use_container_width=True)
 st.caption(
-    "Solid lines = bullish supertrend (dynamic support). Dotted lines = bearish supertrend (dynamic resistance). "
-    "Green triangles = buy signal (price crossed any ST line upward). Red triangles = sell signal (price crossed any ST line downward). "
-    "Strongest signals occur when all 3 lines agree on direction.")
+    "Solid lines = bullish supertrend (dynamic support, below price). "
+    "Dotted lines = bearish supertrend (dynamic resistance, above price). "
+    "Green ▲ = buy signal (price crossed any ST line upward). "
+    "Red ▼ = sell signal (price crossed any ST line downward). "
+    "Strongest signals when all 3 lines agree on direction.")
 
 st.divider()
 
-# ── ROW 1: RSI + Stoch | Price + BB + EMA ──────────────────────
+# ── ROW 1: RSI + Stoch | Price + BB + EMA ─────────────────────
 
 row1_l, row1_r = st.columns(2)
 
@@ -839,6 +859,8 @@ with row1_r:
             status_line(f"Price near upper BB ({bb_f*100:.0f}%) — extended. {cross} on EMAs.", "caution")
         else:
             status_line(f"Price mid-band ({bb_f*100:.0f}%), {cross} active — no edge from BB position.", cross_sent)
+    elif pd.notna(bb_f):
+        status_line("EMA 200 not available for this range — extend date range for EMA cross signal.", "neutral")
     fig2 = go.Figure()
     fig2.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
