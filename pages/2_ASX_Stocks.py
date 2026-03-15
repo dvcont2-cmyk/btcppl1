@@ -229,37 +229,40 @@ def triple_supertrend_signals(df):
     return df
 
 
-# ── CHART 1: Segment-by-segment coloured lines ────────────────
+# ── CHART HELPERS ─────────────────────────────────────────────
+# Efficient ST line rendering: 2 traces per ST (bull + bear), NaN where inactive.
+# This replaces the old per-segment approach that created N-1 traces per ST line.
 
-def add_st_segments(fig, df, st_col, dir_col, bull_color, bear_color, name, show_legend=True):
-    x_vals  = df["time"].values
-    y_vals  = df[st_col].values
-    dirs    = df[dir_col].values
-    legend_bull_added = False
-    legend_bear_added = False
-    for i in range(1, len(df)):
-        if np.isnan(y_vals[i]) or np.isnan(y_vals[i-1]):
-            continue
-        is_bull = dirs[i] == 1
-        color   = bull_color if is_bull else bear_color
-        show_leg = False
-        if show_legend:
-            if is_bull and not legend_bull_added:
-                show_leg = True
-                legend_bull_added = True
-            elif not is_bull and not legend_bear_added:
-                show_leg = True
-                legend_bear_added = True
-        fig.add_trace(go.Scatter(
-            x=[x_vals[i-1], x_vals[i]],
-            y=[y_vals[i-1], y_vals[i]],
-            mode="lines",
-            line=dict(color=color, width=2),
-            name=f"{name} {'Bull' if is_bull else 'Bear'}" if show_leg else None,
-            showlegend=show_leg,
-            legendgroup=f"{name}_{'bull' if is_bull else 'bear'}",
-            hoverinfo="skip"
-        ))
+def add_st_line(fig, df, st_col, dir_col, bull_color, bear_color, name):
+    """Draw one ST as two continuous traces (bull/bear) with NaN breaks. 6 traces total
+    for all 3 STs vs the old approach's ~250+ micro-traces."""
+    x = df["time"].values
+    y = df[st_col].values.astype(float)
+    d = df[dir_col].values
+
+    bull_y = y.copy()
+    bear_y = y.copy()
+    bull_y[d != 1]  = np.nan
+    bear_y[d != -1] = np.nan
+
+    # Bridge the gap at each transition so lines visually connect
+    for i in range(1, len(d)):
+        if d[i] != d[i-1] and not np.isnan(y[i-1]) and not np.isnan(y[i]):
+            if d[i] == 1:
+                bull_y[i-1] = y[i-1]   # pull the last bear point into the bull trace
+            else:
+                bear_y[i-1] = y[i-1]   # pull the last bull point into the bear trace
+
+    fig.add_trace(go.Scatter(
+        x=x, y=bull_y, mode="lines",
+        name=f"{name} Bull", line=dict(color=bull_color, width=2),
+        connectgaps=False, legendgroup=f"{name}_bull",
+        hovertemplate=f"{name} Bull: %{{y:.4f}}<extra></extra>"))
+    fig.add_trace(go.Scatter(
+        x=x, y=bear_y, mode="lines",
+        name=f"{name} Bear", line=dict(color=bear_color, width=2),
+        connectgaps=False, legendgroup=f"{name}_bear",
+        hovertemplate=f"{name} Bear: %{{y:.4f}}<extra></extra>"))
 
 
 def build_chart1(df):
@@ -271,9 +274,9 @@ def build_chart1(df):
         increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
         increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
 
-    add_st_segments(fig, df, "st1", "dir1", "#34d399", "#f87171", "ST1(7,3.0)", show_legend=True)
-    add_st_segments(fig, df, "st2", "dir2", "#60a5fa", "#fb923c", "ST2(14,2.0)", show_legend=True)
-    add_st_segments(fig, df, "st3", "dir3", "#c084fc", "#f472b6", "ST3(21,1.0)", show_legend=True)
+    add_st_line(fig, df, "st1", "dir1", "#34d399", "#f87171", "ST1(7,3.0)")
+    add_st_line(fig, df, "st2", "dir2", "#60a5fa", "#fb923c", "ST2(14,2.0)")
+    add_st_line(fig, df, "st3", "dir3", "#c084fc", "#f472b6", "ST3(21,1.0)")
 
     buy_df  = df[df["buy_signal"].notna()]
     sell_df = df[df["sell_signal"].notna()]
@@ -333,37 +336,38 @@ def build_chart2(df):
     add_bg_zones(fig, df, all_bull, "#22c55e")
     add_bg_zones(fig, df, all_bear, "#ef4444")
 
-    # Candles coloured by bull count (3=bright green, 2=dim green, 1=dim red, 0=bright red)
-    def candle_color(row):
-        bulls = sum(1 for d in [row["dir1"], row["dir2"], row["dir3"]] if d == 1)
-        if   bulls == 3: return "#22c55e", "#22c55e"
-        elif bulls == 2: return "#86efac", "#86efac"
-        elif bulls == 1: return "#fca5a5", "#fca5a5"
-        else:            return "#ef4444", "#ef4444"
 
-    up_color   = []
-    down_color = []
-    for _, row in df.iterrows():
-        uc, dc = candle_color(row)
-        up_color.append(uc)
-        down_color.append(dc)
 
-    fig.add_trace(go.Candlestick(
-        x=df["time"], open=df["open"], high=df["high"],
-        low=df["low"], close=df["close"],
-        name="Price",
-        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
-        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
 
-    # ST lines: only draw the ACTIVE side — green below when bull, red above when bear
-    # One trace per ST, show only the relevant (active) line per bar
+    # Candles split into 4 groups by bull count — each group gets its own colour.
+    # go.Candlestick doesn't support per-bar colours, so we use 4 separate traces.
+    CANDLE_STYLES = {
+        3: ("#22c55e", "3/3 Bull"),
+        2: ("#86efac", "2/3 Bull"),
+        1: ("#fca5a5", "1/3 Bull"),
+        0: ("#ef4444", "0/3 Bull"),
+    }
+    df["_bull_count"] = df.apply(
+        lambda r: sum(1 for d in [r["dir1"], r["dir2"], r["dir3"]] if d == 1), axis=1)
+    for bull_cnt, (color, lbl) in CANDLE_STYLES.items():
+        sub = df[df["_bull_count"] == bull_cnt]
+        if sub.empty:
+            continue
+        fig.add_trace(go.Candlestick(
+            x=sub["time"], open=sub["open"], high=sub["high"],
+            low=sub["low"], close=sub["close"],
+            name=lbl,
+            increasing_line_color=color, decreasing_line_color=color,
+            increasing_fillcolor=color,  decreasing_fillcolor=color))
+
+    # ST lines (efficient 2-trace approach)
     st_configs = [
         ("st1", "dir1", "#00e676", "#ff1744", "ST1 (7, 3.0)"),
         ("st2", "dir2", "#00bcd4", "#ff9800", "ST2 (14, 2.0)"),
         ("st3", "dir3", "#ce93d8", "#f06292", "ST3 (21, 1.0)"),
     ]
     for st_col, dir_col, bull_c, bear_c, label in st_configs:
-        add_st_segments(fig, df, st_col, dir_col, bull_c, bear_c, label, show_legend=True)
+        add_st_line(fig, df, st_col, dir_col, bull_c, bear_c, label)
 
     # EMA 200
     if df["EMA_200"].notna().any():
@@ -427,7 +431,162 @@ def build_chart2(df):
     return fig
 
 
-def detect_trend_structure(df, window=3):
+
+# ── CHART 3: Triple SuperTrend + RSI(7) + Fibonacci Bollinger Bands ──────────
+# Based on TradingView script by TRW_meir (jw3P5XtU)
+# ST params: (10,1.0), (11,2.0), (12,3.0) — tighter ATR periods than Chart 1 & 2
+# BUY:  all 3 STs bullish AND RSI(7) > 50 — first bar of full alignment only
+# SELL: all 3 STs bearish AND RSI(7) < 50 — first bar of full alignment only
+# EXIT: any single ST flips direction OR price touches Fibonacci BB band (200, 2.618)
+
+def compute_fib_bb(close_series, length=200, mult=2.618):
+    basis = close_series.rolling(length).mean()
+    dev   = close_series.rolling(length).std(ddof=0)
+    return basis, basis + mult * dev, basis - mult * dev
+
+
+def compute_chart3_signals(df):
+    df = df.copy()
+    df["c3_st1"], df["c3_dir1"] = compute_supertrend(df, period=10, multiplier=1.0)
+    df["c3_st2"], df["c3_dir2"] = compute_supertrend(df, period=11, multiplier=2.0)
+    df["c3_st3"], df["c3_dir3"] = compute_supertrend(df, period=12, multiplier=3.0)
+    df["c3_rsi7"] = ta.momentum.RSIIndicator(df["close"], window=7).rsi()
+    df["c3_fib_basis"], df["c3_fib_upper"], df["c3_fib_lower"] = compute_fib_bb(df["close"])
+    df["c3_buy"]  = None
+    df["c3_sell"] = None
+    df["c3_exit"] = None
+    prev_all_bull = False
+    prev_all_bear = False
+    for i in range(1, len(df)):
+        d1   = df["c3_dir1"].iloc[i];   pd1 = df["c3_dir1"].iloc[i-1]
+        d2   = df["c3_dir2"].iloc[i];   pd2 = df["c3_dir2"].iloc[i-1]
+        d3   = df["c3_dir3"].iloc[i];   pd3 = df["c3_dir3"].iloc[i-1]
+        rsi7 = df["c3_rsi7"].iloc[i]
+        cls  = df["close"].iloc[i]
+        fub  = df["c3_fib_upper"].iloc[i]
+        flb  = df["c3_fib_lower"].iloc[i]
+        all_bull = (d1 == 1  and d2 == 1  and d3 == 1)
+        all_bear = (d1 == -1 and d2 == -1 and d3 == -1)
+        # Entry signals (first bar of full alignment with RSI confirmation)
+        if all_bull and not prev_all_bull and pd.notna(rsi7) and rsi7 > 50:
+            df.at[df.index[i], "c3_buy"] = cls
+        if all_bear and not prev_all_bear and pd.notna(rsi7) and rsi7 < 50:
+            df.at[df.index[i], "c3_sell"] = cls
+        # Exit: any ST flipped OR Fib BB touched
+        st_flip   = (d1 != pd1) or (d2 != pd2) or (d3 != pd3)
+        fib_touch = pd.notna(fub) and pd.notna(flb) and (cls >= fub or cls <= flb)
+        if st_flip or fib_touch:
+            df.at[df.index[i], "c3_exit"] = cls
+        prev_all_bull = all_bull
+        prev_all_bear = all_bear
+    return df
+
+
+def build_chart3(df):
+    fig = go.Figure()
+
+    # Background shading
+    all_bull = (df["c3_dir1"] == 1) & (df["c3_dir2"] == 1) & (df["c3_dir3"] == 1)
+    all_bear = (df["c3_dir1"] == -1) & (df["c3_dir2"] == -1) & (df["c3_dir3"] == -1)
+
+    def _add_bg(fig, df, mask, color):
+        in_zone = False; start = None
+        for i, val in enumerate(mask):
+            if val and not in_zone:
+                in_zone = True; start = df["time"].iloc[i]
+            elif not val and in_zone:
+                in_zone = False
+                fig.add_vrect(x0=start, x1=df["time"].iloc[i-1],
+                              fillcolor=color, opacity=0.07, layer="below", line_width=0)
+        if in_zone:
+            fig.add_vrect(x0=start, x1=df["time"].iloc[-1],
+                          fillcolor=color, opacity=0.07, layer="below", line_width=0)
+
+    _add_bg(fig, df, all_bull, "#22c55e")
+    _add_bg(fig, df, all_bear, "#ef4444")
+
+    # Price candles (standard colour — Chart 3 focus is on signals, not candle tinting)
+    fig.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"],  close=df["close"],
+        name="Price",
+        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
+
+    # Three ST lines — distinct opacity steps like the TradingView version
+    st3_configs = [
+        ("c3_st1", "c3_dir1", "#00e5ff", "#ff6d00", "ST1 (10,1.0)", 1.0),
+        ("c3_st2", "c3_dir2", "#40c4ff", "#ff9100", "ST2 (11,2.0)", 0.75),
+        ("c3_st3", "c3_dir3", "#80d8ff", "#ffab40", "ST3 (12,3.0)", 0.5),
+    ]
+    for st_col, dir_col, bull_c, bear_c, label, _op in st3_configs:
+        if st_col not in df.columns:
+            continue
+        add_st_line(fig, df, st_col, dir_col, bull_c, bear_c, label)
+
+    # Fibonacci Bollinger Bands (200, 2.618)
+    if df["c3_fib_upper"].notna().any():
+        fig.add_trace(go.Scatter(
+            x=df["time"], y=df["c3_fib_upper"],
+            name="Fib BB Upper (2.618)", line=dict(color="#fbbf24", width=1.5, dash="dot"),
+            hovertemplate="Fib BB Upper: %{y:.4f}<extra></extra>"))
+        fig.add_trace(go.Scatter(
+            x=df["time"], y=df["c3_fib_lower"],
+            name="Fib BB Lower (2.618)", line=dict(color="#fbbf24", width=1.5, dash="dot"),
+            fill="tonexty", fillcolor="rgba(251,191,36,0.05)",
+            hovertemplate="Fib BB Lower: %{y:.4f}<extra></extra>"))
+        fig.add_trace(go.Scatter(
+            x=df["time"], y=df["c3_fib_basis"],
+            name="Fib BB Basis (SMA 200)", line=dict(color="#fbbf24", width=1, dash="dash"),
+            hovertemplate="Fib BB Basis: %{y:.4f}<extra></extra>"))
+
+    # RSI(7) overlay as a secondary axis annotation at signal points
+    # (full RSI panel is already in the RSI chart below; here just reference value in hover)
+
+    # Buy / Sell / Exit arrows
+    buy_df  = df[df["c3_buy"].notna()]
+    sell_df = df[df["c3_sell"].notna()]
+    exit_df = df[df["c3_exit"].notna()]
+
+    if not buy_df.empty:
+        fig.add_trace(go.Scatter(
+            x=buy_df["time"], y=buy_df["low"].astype(float) * 0.990,
+            mode="markers+text", name="BUY (all 3 bull + RSI>50)",
+            text=["▲"] * len(buy_df),
+            textfont=dict(size=20, color="#00e676"),
+            marker=dict(symbol="triangle-up", size=16, color="#00e676",
+                        line=dict(color="white", width=1)),
+            textposition="bottom center"))
+
+    if not sell_df.empty:
+        fig.add_trace(go.Scatter(
+            x=sell_df["time"], y=sell_df["high"].astype(float) * 1.010,
+            mode="markers+text", name="SELL (all 3 bear + RSI<50)",
+            text=["▼"] * len(sell_df),
+            textfont=dict(size=20, color="#ff1744"),
+            marker=dict(symbol="triangle-down", size=16, color="#ff1744",
+                        line=dict(color="white", width=1)),
+            textposition="top center"))
+
+    if not exit_df.empty:
+        fig.add_trace(go.Scatter(
+            x=exit_df["time"], y=exit_df["high"].astype(float) * 1.015,
+            mode="markers", name="EXIT (ST flip or Fib BB touch)",
+            marker=dict(symbol="triangle-down", size=10, color="#fbbf24",
+                        line=dict(color="white", width=1))))
+
+    fig.update_layout(
+        title="Triple Supertrend Chart 3  (RSI + Fib BB — TRW_meir style)",
+        height=650,
+        margin=dict(t=50, b=10),
+        xaxis_rangeslider_visible=False,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        plot_bgcolor="#0e1117",
+        paper_bgcolor="rgba(0,0,0,0)")
+    return fig
+
+
+
     closes = df["close"].values
     highs_pts, lows_pts = [], []
     for i in range(window, len(closes) - window):
@@ -684,6 +843,7 @@ if df.empty:
     st.stop()
 
 df     = triple_supertrend_signals(df)
+df     = compute_chart3_signals(df)
 latest = df.iloc[-1]
 
 if pd.isna(latest["EMA_200"]) and interval == "1wk":
@@ -853,6 +1013,50 @@ st.caption(
     "Candle colour reflects ST alignment: bright green = 3/3 bull, light green = 2/3, light red = 1/3, bright red = 0/3. "
     "Green background zone = all 3 bullish. Red background zone = all 3 bearish. "
     "EMA 200 (yellow dotted). Large ▲/▼ arrows fire only when all 3 STs first align in the same direction.")
+
+st.divider()
+
+# ── CHART 3 ────────────────────────────────────────────────────
+
+st.markdown("### 📊 Triple Supertrend Chart 3 — RSI + Fibonacci BB")
+
+# Chart 3 current status
+c3_bulls = sum(1 for d in [latest.get("c3_dir1", 0), latest.get("c3_dir2", 0), latest.get("c3_dir3", 0)] if d == 1)
+c3_bears = sum(1 for d in [latest.get("c3_dir1", 0), latest.get("c3_dir2", 0), latest.get("c3_dir3", 0)] if d == -1)
+c3_rsi7  = latest.get("c3_rsi7", float("nan"))
+
+def st3_badge(direction):
+    return val_span("▲ Bull", "#00e676") if direction == 1 else val_span("▼ Bear", "#ff6d00")
+
+st.markdown(
+    f"<p style='font-size:0.9rem; margin-bottom:2px'>"
+    f"ST1 (10,1.0): {st3_badge(latest.get('c3_dir1',0))} &nbsp;&nbsp; "
+    f"ST2 (11,2.0): {st3_badge(latest.get('c3_dir2',0))} &nbsp;&nbsp; "
+    f"ST3 (12,3.0): {st3_badge(latest.get('c3_dir3',0))} &nbsp;&nbsp; "
+    f"RSI(7): {val_span(f'{c3_rsi7:.1f}' if pd.notna(c3_rsi7) else 'N/A', '#fbbf24')}"
+    f"</p>",
+    unsafe_allow_html=True)
+
+if c3_bulls == 3 and pd.notna(c3_rsi7) and c3_rsi7 > 50:
+    status_line("All 3 STs bullish + RSI(7) > 50 — full BUY confluence active.", "strong_bullish")
+elif c3_bulls == 3:
+    status_line("All 3 STs bullish but RSI(7) ≤ 50 — alignment without momentum, wait for RSI confirmation.", "caution")
+elif c3_bears == 3 and pd.notna(c3_rsi7) and c3_rsi7 < 50:
+    status_line("All 3 STs bearish + RSI(7) < 50 — full SELL confluence active.", "strong_bearish")
+elif c3_bears == 3:
+    status_line("All 3 STs bearish but RSI(7) ≥ 50 — alignment without momentum, wait for RSI confirmation.", "caution")
+else:
+    status_line("STs conflicted — no entry signal. Watch for all-3 alignment + RSI confirmation.", "neutral")
+
+fig3 = build_chart3(df)
+st.plotly_chart(fig3, use_container_width=True)
+st.caption(
+    "**Triple Supertrend Chart 3 (RSI + Fib BB)** — "
+    "ST params: (10,1.0), (11,2.0), (12,3.0). "
+    "🟢 BUY: all 3 STs bullish + RSI(7) > 50 on first alignment bar. "
+    "🔴 SELL: all 3 STs bearish + RSI(7) < 50 on first alignment bar. "
+    "🟡 EXIT: any ST flips OR price touches Fibonacci BB (SMA 200 ± 2.618σ). "
+    "Based on TradingView script by TRW_meir.")
 
 st.divider()
 
