@@ -188,32 +188,40 @@ def compute_indicators(df):
 
 
 def compute_supertrend(df, period, multiplier):
-    atr    = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=period).average_true_range()
-    hl_avg = (df["high"] + df["low"]) / 2
+    atr         = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=period).average_true_range()
+    hl_avg      = (df["high"] + df["low"]) / 2
+    basic_upper = (hl_avg + multiplier * atr).values.copy()
+    basic_lower = (hl_avg - multiplier * atr).values.copy()
+    close       = df["close"].values
 
-    upper_band = (hl_avg + multiplier * atr).values.copy()
-    lower_band = (hl_avg - multiplier * atr).values.copy()
-    close      = df["close"].values
-    supertrend = np.full(len(df), np.nan)
-    direction  = np.zeros(len(df), dtype=int)
+    final_upper = basic_upper.copy()
+    final_lower = basic_lower.copy()
+    supertrend  = np.full(len(df), np.nan)
+    direction   = np.zeros(len(df), dtype=int)
 
     for i in range(1, len(df)):
         if np.isnan(atr.iloc[i]):
             continue
 
-        if lower_band[i] < lower_band[i-1]:
-            lower_band[i] = lower_band[i-1]
-        if upper_band[i] > upper_band[i-1]:
-            upper_band[i] = upper_band[i-1]
-
-        if close[i] > upper_band[i-1]:
-            direction[i] = 1
-        elif close[i] < lower_band[i-1]:
-            direction[i] = -1
+        # upper band: only moves down (tightens resistance)
+        if basic_upper[i] < final_upper[i-1] or close[i-1] > final_upper[i-1]:
+            final_upper[i] = basic_upper[i]
         else:
-            direction[i] = direction[i-1]
+            final_upper[i] = final_upper[i-1]
 
-        supertrend[i] = lower_band[i] if direction[i] == 1 else upper_band[i]
+        # lower band: only moves up (tightens support)
+        if basic_lower[i] > final_lower[i-1] or close[i-1] < final_lower[i-1]:
+            final_lower[i] = basic_lower[i]
+        else:
+            final_lower[i] = final_lower[i-1]
+
+        # flip direction based on previous direction
+        if direction[i-1] == 1:
+            direction[i] = -1 if close[i] < final_lower[i] else 1
+        else:
+            direction[i] = 1 if close[i] > final_upper[i] else -1
+
+        supertrend[i] = final_lower[i] if direction[i] == 1 else final_upper[i]
 
     return pd.Series(supertrend, index=df.index), pd.Series(direction, index=df.index)
 
@@ -232,16 +240,13 @@ def triple_supertrend_signals(df):
         pc = df["close"].iloc[i-1]
         s1, s2, s3 = df["st1"].iloc[i], df["st2"].iloc[i], df["st3"].iloc[i]
         p1, p2, p3 = df["st1"].iloc[i-1], df["st2"].iloc[i-1], df["st3"].iloc[i-1]
-        cross_up = (
-            (not pd.isna(s1) and not pd.isna(p1) and pc <= p1 and c > s1) or
-            (not pd.isna(s2) and not pd.isna(p2) and pc <= p2 and c > s2) or
-            (not pd.isna(s3) and not pd.isna(p3) and pc <= p3 and c > s3)
-        )
-        cross_dn = (
-            (not pd.isna(s1) and not pd.isna(p1) and pc >= p1 and c < s1) or
-            (not pd.isna(s2) and not pd.isna(p2) and pc >= p2 and c < s2) or
-            (not pd.isna(s3) and not pd.isna(p3) and pc >= p3 and c < s3)
-        )
+        d1, d2, d3 = df["dir1"].iloc[i], df["dir2"].iloc[i], df["dir3"].iloc[i]
+        pd1, pd2, pd3 = df["dir1"].iloc[i-1], df["dir2"].iloc[i-1], df["dir3"].iloc[i-1]
+
+        # signal fires on direction change
+        cross_up = (d1 == 1 and pd1 == -1) or (d2 == 1 and pd2 == -1) or (d3 == 1 and pd3 == -1)
+        cross_dn = (d1 == -1 and pd1 == 1) or (d2 == -1 and pd2 == 1) or (d3 == -1 and pd3 == 1)
+
         if cross_up:
             df.at[df.index[i], "buy_signal"]  = c
         if cross_dn:
@@ -716,15 +721,15 @@ st.markdown(
     unsafe_allow_html=True)
 
 if bulls == 3:
-    status_line("All 3 Supertrends bullish — strong trend alignment across all timeframes, high-conviction long setup.", "strong_bullish")
+    status_line("All 3 Supertrends bullish — solid lines below price, high-conviction long setup.", "strong_bullish")
 elif bulls == 2:
     status_line("2 of 3 Supertrends bullish — trend leaning up but not fully aligned. Wait for ST3 (21,1) to confirm.", "bullish")
 elif bears == 3:
-    status_line("All 3 Supertrends bearish — strong downtrend alignment across all timeframes, avoid new longs.", "strong_bearish")
+    status_line("All 3 Supertrends bearish — dotted lines above price, strong downtrend, avoid new longs.", "strong_bearish")
 elif bears == 2:
-    status_line("2 of 3 Supertrends bearish — trend leaning down, caution on long entries until alignment improves.", "bearish")
+    status_line("2 of 3 Supertrends bearish — trend leaning down, caution on long entries.", "bearish")
 else:
-    status_line("Supertrends conflicted — no directional edge, stay out until clearer alignment forms.", "neutral")
+    status_line("Supertrends conflicted — mixed directions, no clear edge, wait for alignment.", "neutral")
 
 fig_tst = go.Figure()
 
@@ -784,11 +789,10 @@ fig_tst.update_layout(
 
 st.plotly_chart(fig_tst, use_container_width=True)
 st.caption(
-    "Solid lines = bullish supertrend (dynamic support, below price). "
-    "Dotted lines = bearish supertrend (dynamic resistance, above price). "
-    "Green ▲ = buy signal (price crossed any ST line upward). "
-    "Red ▼ = sell signal (price crossed any ST line downward). "
-    "Strongest signals when all 3 lines agree on direction.")
+    "Solid lines below price = bullish (dynamic support). "
+    "Dotted lines above price = bearish (dynamic resistance). "
+    "Green ▲ = direction flipped bullish. Red ▼ = direction flipped bearish. "
+    "Best signals when all 3 lines agree.")
 
 st.divider()
 
