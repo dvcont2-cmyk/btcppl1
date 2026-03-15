@@ -186,6 +186,63 @@ def compute_indicators(df):
     return df
 
 
+def compute_supertrend(df, period, multiplier):
+    atr    = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=period).average_true_range()
+    hl_avg = (df["high"] + df["low"]) / 2
+    upper_band = (hl_avg + multiplier * atr).copy()
+    lower_band = (hl_avg - multiplier * atr).copy()
+
+    supertrend = [float("nan")] * len(df)
+    direction  = [0] * len(df)
+
+    for i in range(1, len(df)):
+        if pd.isna(atr.iloc[i]):
+            continue
+        if lower_band.iloc[i] < lower_band.iloc[i-1]:
+            lower_band.iloc[i] = lower_band.iloc[i-1]
+        if upper_band.iloc[i] > upper_band.iloc[i-1]:
+            upper_band.iloc[i] = upper_band.iloc[i-1]
+        if df["close"].iloc[i] > upper_band.iloc[i-1]:
+            direction[i] = 1
+        elif df["close"].iloc[i] < lower_band.iloc[i-1]:
+            direction[i] = -1
+        else:
+            direction[i] = direction[i-1]
+        supertrend[i] = lower_band.iloc[i] if direction[i] == 1 else upper_band.iloc[i]
+
+    return pd.Series(supertrend, index=df.index), pd.Series(direction, index=df.index)
+
+
+def triple_supertrend_signals(df):
+    df = df.copy()
+    df["st1"], df["dir1"] = compute_supertrend(df, period=7,  multiplier=3.0)
+    df["st2"], df["dir2"] = compute_supertrend(df, period=14, multiplier=2.0)
+    df["st3"], df["dir3"] = compute_supertrend(df, period=21, multiplier=1.0)
+
+    df["buy_signal"]  = None
+    df["sell_signal"] = None
+
+    for i in range(1, len(df)):
+        c  = df["close"].iloc[i]
+        pc = df["close"].iloc[i-1]
+        cross_up = (
+            (pc <= df["st1"].iloc[i-1] and c > df["st1"].iloc[i]) or
+            (pc <= df["st2"].iloc[i-1] and c > df["st2"].iloc[i]) or
+            (pc <= df["st3"].iloc[i-1] and c > df["st3"].iloc[i])
+        )
+        cross_dn = (
+            (pc >= df["st1"].iloc[i-1] and c < df["st1"].iloc[i]) or
+            (pc >= df["st2"].iloc[i-1] and c < df["st2"].iloc[i]) or
+            (pc >= df["st3"].iloc[i-1] and c < df["st3"].iloc[i])
+        )
+        if cross_up:
+            df.at[df.index[i], "buy_signal"]  = c
+        if cross_dn:
+            df.at[df.index[i], "sell_signal"] = c
+
+    return df
+
+
 def detect_trend_structure(df, window=3):
     closes = df["close"].values
     highs_pts, lows_pts = [], []
@@ -490,6 +547,7 @@ if df.empty or len(df) < 30:
 
 df     = compute_indicators(df)
 df     = df.dropna(subset=["RSI"]).reset_index(drop=True)
+df     = triple_supertrend_signals(df)
 latest = df.iloc[-1]
 
 price         = info.get("price") or float(latest["close"])
@@ -521,6 +579,8 @@ sq_val     = "ON" if latest["squeeze"] else "OFF"
 sq_color   = "red" if latest["squeeze"] else "lime"
 
 is_swing_suitable = ticker in SWING_TRADE_SUITABLE
+
+# ── HEADER ─────────────────────────────────────────────────────
 
 st.markdown("#### ASX Stock Technical Dashboard")
 st.caption(f"Swing trade focused analysis | {timeframe} | {date_start.strftime('%d %b %Y')} to {date_end.strftime('%d %b %Y')}")
@@ -563,6 +623,8 @@ st.divider()
 st.markdown(f"#### Market Structure: {trend_label}")
 st.caption("Based on recent swing highs and lows.")
 st.divider()
+
+# ── SWING TRADE ANALYSIS ───────────────────────────────────────
 
 st.markdown("### Swing Trade Analysis")
 
@@ -609,6 +671,108 @@ with st.expander("All 10 Indicators - Signal Breakdown", expanded=False):
             st.markdown(f"- **{name}**: {desc}")
 
 st.divider()
+
+# ── TRIPLE SUPERTREND ──────────────────────────────────────────
+
+st.markdown("### 📊 Triple Supertrend Crossover")
+
+bulls = sum(1 for d in [latest["dir1"], latest["dir2"], latest["dir3"]] if d == 1)
+bears = sum(1 for d in [latest["dir1"], latest["dir2"], latest["dir3"]] if d == -1)
+
+def st_badge(direction):
+    if direction == 1:
+        return val_span("▲ Bull", "#22c55e")
+    else:
+        return val_span("▼ Bear", "#ef4444")
+
+st.markdown(
+    f"<p style='font-size:0.9rem; margin-bottom:2px'>"
+    f"ST1 (7, 3.0): {st_badge(latest['dir1'])} &nbsp;&nbsp; "
+    f"ST2 (14, 2.0): {st_badge(latest['dir2'])} &nbsp;&nbsp; "
+    f"ST3 (21, 1.0): {st_badge(latest['dir3'])}"
+    f"</p>",
+    unsafe_allow_html=True)
+
+if bulls == 3:
+    status_line("All 3 Supertrends bullish — strong trend alignment across all timeframes, high-conviction long setup.", "strong_bullish")
+elif bulls == 2:
+    status_line(f"2 of 3 Supertrends bullish — trend leaning up but not fully aligned. Wait for ST3 (21,1) to confirm.", "bullish")
+elif bears == 3:
+    status_line("All 3 Supertrends bearish — strong downtrend alignment across all timeframes, avoid new longs.", "strong_bearish")
+elif bears == 2:
+    status_line(f"2 of 3 Supertrends bearish — trend leaning down, caution on long entries until alignment improves.", "bearish")
+else:
+    status_line("Supertrends conflicted (1 bull, 1 bear, 1 neutral) — no directional edge, stay out until clearer.", "neutral")
+
+fig_tst = go.Figure()
+
+fig_tst.add_trace(go.Candlestick(
+    x=df["time"], open=df["open"], high=df["high"],
+    low=df["low"], close=df["close"],
+    name="Price",
+    increasing_line_color="#22c55e",
+    decreasing_line_color="#ef4444",
+    increasing_fillcolor="#22c55e",
+    decreasing_fillcolor="#ef4444"))
+
+st_configs = [
+    ("st1", "dir1", "ST1 (7, 3.0)",  "#34d399", "#f87171"),
+    ("st2", "dir2", "ST2 (14, 2.0)", "#60a5fa", "#fb923c"),
+    ("st3", "dir3", "ST3 (21, 1.0)", "#c084fc", "#f472b6"),
+]
+
+for st_col, dir_col, label, bull_color, bear_color in st_configs:
+    bull_idx = df[dir_col] == 1
+    bear_idx = df[dir_col] == -1
+
+    fig_tst.add_trace(go.Scatter(
+        x=df["time"][bull_idx], y=df[st_col][bull_idx],
+        name=f"{label} Bull", mode="lines",
+        line=dict(color=bull_color, width=2),
+        connectgaps=False))
+
+    fig_tst.add_trace(go.Scatter(
+        x=df["time"][bear_idx], y=df[st_col][bear_idx],
+        name=f"{label} Bear", mode="lines",
+        line=dict(color=bear_color, width=2, dash="dot"),
+        connectgaps=False))
+
+buy_df  = df[df["buy_signal"].notna()]
+sell_df = df[df["sell_signal"].notna()]
+
+fig_tst.add_trace(go.Scatter(
+    x=buy_df["time"],
+    y=buy_df["buy_signal"].astype(float) * 0.995,
+    mode="markers",
+    name="Buy Signal",
+    marker=dict(symbol="triangle-up", size=14, color="#22c55e",
+                line=dict(color="white", width=1))))
+
+fig_tst.add_trace(go.Scatter(
+    x=sell_df["time"],
+    y=sell_df["sell_signal"].astype(float) * 1.005,
+    mode="markers",
+    name="Sell Signal",
+    marker=dict(symbol="triangle-down", size=14, color="#ef4444",
+                line=dict(color="white", width=1))))
+
+fig_tst.update_layout(
+    height=600,
+    margin=dict(t=10, b=10),
+    xaxis_rangeslider_visible=False,
+    legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
+    plot_bgcolor="rgba(0,0,0,0)",
+    paper_bgcolor="rgba(0,0,0,0)")
+
+st.plotly_chart(fig_tst, use_container_width=True)
+st.caption(
+    "Solid lines = bullish supertrend (dynamic support). Dotted lines = bearish supertrend (dynamic resistance). "
+    "Green triangles = buy signal (price crossed any ST line upward). Red triangles = sell signal (price crossed any ST line downward). "
+    "Strongest signals occur when all 3 lines agree on direction.")
+
+st.divider()
+
+# ── ROW 1: RSI + Stoch | Price + BB + EMA ──────────────────────
 
 row1_l, row1_r = st.columns(2)
 
@@ -703,6 +867,8 @@ with row1_r:
 
 st.divider()
 
+# ── ROW 2: MACD | ADX ─────────────────────────────────────────
+
 row2_l, row2_r = st.columns(2)
 
 with row2_l:
@@ -775,6 +941,8 @@ with row2_r:
 
 st.divider()
 
+# ── ROW 3: CCI | Williams %R ───────────────────────────────────
+
 row3_l, row3_r = st.columns(2)
 
 with row3_l:
@@ -827,6 +995,8 @@ with row3_r:
 
 st.divider()
 
+# ── ROW 4: ROC | ATR ──────────────────────────────────────────
+
 row4_l, row4_r = st.columns(2)
 
 with row4_l:
@@ -878,6 +1048,8 @@ with row4_r:
     st.caption("ATR rising = increasing volatility. Size stops at 1.5-2x ATR. Expanding ATR on breakouts = confirmation.")
 
 st.divider()
+
+# ── ROW 5: TTM Squeeze | Volume ────────────────────────────────
 
 row5_l, row5_r = st.columns(2)
 
