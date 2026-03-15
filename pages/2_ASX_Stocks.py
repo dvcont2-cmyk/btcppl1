@@ -4,12 +4,12 @@ import pandas as pd
 import ta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(layout="wide", page_title="ASX Stock Dashboard")
 
-st_autorefresh(interval=300_000, key="asx_refresh")  # 5 min refresh
+st_autorefresh(interval=300_000, key="asx_refresh")
 
 st.markdown("""
 <style>
@@ -49,10 +49,104 @@ STOCK_NOTES = {
 
 SWING_TRADE_SUITABLE = {"PDN.AX", "CXO.AX", "NST.AX", "PLS.AX", "EPM.AX"}
 
+# ── SIDEBAR ────────────────────────────────────────────────────
+
 st.sidebar.header("⚙️ ASX Settings")
 stock_label = st.sidebar.selectbox("Select Stock / ETF", list(ASX_STOCKS.keys()))
 ticker      = ASX_STOCKS[stock_label]
 timeframe   = st.sidebar.radio("Timeframe", ["Daily", "Weekly"])
+interval    = "1d" if timeframe == "Daily" else "1wk"
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**📅 Chart Range**")
+range_option = st.sidebar.selectbox(
+    "Quick Select",
+    ["3 Months", "6 Months", "1 Year", "2 Years", "3 Years", "5 Years", "Custom"],
+    indexHere's the complete file:
+
+```python
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import ta
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from datetime import datetime, date, timedelta
+from streamlit_autorefresh import st_autorefresh
+
+st.set_page_config(layout="wide", page_title="ASX Stock Dashboard")
+
+st_autorefresh(interval=300_000, key="asx_refresh")
+
+st.markdown("""
+<style>
+[data-testid="stMetricValue"] { font-size: 1rem !important; font-weight: 600; }
+[data-testid="stMetricLabel"] { font-size: 0.75rem !important; }
+[data-testid="stMetricDelta"] { font-size: 0.75rem !important; }
+[data-testid="stMetric"]      { padding: 4px 0px !important; }
+.block-container              { padding-top: 2.75rem !important; }
+</style>
+""", unsafe_allow_html=True)
+
+ASX_STOCKS = {
+    "Paladin Energy (PDN)":     "PDN.AX",
+    "Core Lithium (CXO)":       "CXO.AX",
+    "Eclipse Metals (EPM)":     "EPM.AX",
+    "Northern Star (NST)":      "NST.AX",
+    "Pilbara Minerals (PLS)":   "PLS.AX",
+    "Vanguard AU Shares (VAS)": "VAS.AX",
+    "Vanguard Intl (VGS)":      "VGS.AX",
+    "Vanguard Div HG (VDHG)":   "VDHG.AX",
+    "Betashares Div HG (DHHF)": "DHHF.AX",
+    "Vanguard EM (VGE)":        "VGE.AX",
+}
+
+STOCK_NOTES = {
+    "PDN.AX":  "Uranium miner — high beta, sentiment-driven. Watch uranium spot price as leading signal.",
+    "CXO.AX":  "Lithium explorer — speculative, thin liquidity. EV demand & lithium price are key macro drivers.",
+    "EPM.AX":  "Junior explorer — very low liquidity. TA signals less reliable; treat as speculative only.",
+    "NST.AX":  "Mid-cap gold miner — tracks gold price closely. Safe-haven flows & AUD/USD matter.",
+    "PLS.AX":  "Lithium producer — more liquid than CXO. Tied to lithium carbonate spot & EV demand.",
+    "VAS.AX":  "ASX 200 ETF — broad market exposure. TA best used for market timing, not stock picking.",
+    "VGS.AX":  "Global ex-AU ETF — tracks MSCI World. USD/AUD FX has significant impact on returns.",
+    "VDHG.AX": "Diversified high growth ETF — slow mover, best for long-term DCA. TA less meaningful.",
+    "DHHF.AX": "100% equities diversified ETF — similar to VDHG. Swing trading not ideal; DCA vehicle.",
+    "VGE.AX":  "Emerging markets ETF — higher volatility than VGS. Geopolitical risk & USD are key.",
+}
+
+SWING_TRADE_SUITABLE = {"PDN.AX", "CXO.AX", "NST.AX", "PLS.AX", "EPM.AX"}
+
+# ── SIDEBAR ────────────────────────────────────────────────────
+
+st.sidebar.header("⚙️ ASX Settings")
+stock_label = st.sidebar.selectbox("Select Stock / ETF", list(ASX_STOCKS.keys()))
+ticker      = ASX_STOCKS[stock_label]
+timeframe   = st.sidebar.radio("Timeframe", ["Daily", "Weekly"])
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**📅 Chart Range**")
+range_option = st.sidebar.selectbox(
+    "Quick Select",
+    ["3 Months", "6 Months", "1 Year", "2 Years", "3 Years", "5 Years", "Custom"],
+    index=3
+)
+
+range_map = {
+    "3 Months": 90,
+    "6 Months": 180,
+    "1 Year":   365,
+    "2 Years":  730,
+    "3 Years":  1095,
+    "5 Years":  1825,
+}
+
+if range_option == "Custom":
+    col_s, col_e = st.sidebar.columns(2)
+    date_start = col_s.date_input("From", value=date.today() - timedelta(days=730))
+    date_end   = col_e.date_input("To",   value=date.today())
+else:
+    date_end   = date.today()
+    date_start = date_end - timedelta(days=range_map[range_option])
 
 if st.sidebar.button("🔄 Force Refresh"):
     st.cache_data.clear()
@@ -72,14 +166,20 @@ def delta_metric(col, label, val, suffix="%"):
 # ── DATA ───────────────────────────────────────────────────────
 
 @st.cache_data(ttl=300)
-def get_stock_data(ticker, period, interval):
+def get_stock_data(ticker, start_date, end_date, interval):
     try:
-        df = yf.download(ticker, period=period, interval=interval,
-                         auto_adjust=True, progress=False)
+        df = yf.download(
+            ticker,
+            start=start_date.strftime("%Y-%m-%d"),
+            end=end_date.strftime("%Y-%m-%d"),
+            interval=interval,
+            auto_adjust=True,
+            progress=False
+        )
         if df.empty:
             return pd.DataFrame()
         df = df.reset_index()
-        df.columns = [c[0].lower() if isinstance(c, tuple) else c.lower()
+        df.columns = [c.lower() if isinstance(c, tuple) else c.lower()
                       for c in df.columns]
         df = df.rename(columns={"date": "time", "datetime": "time"})
         for col in ["open", "high", "low", "close"]:
@@ -137,7 +237,6 @@ def compute_indicators(df):
     df["WilliamsR"]   = ta.momentum.WilliamsRIndicator(df["high"], df["low"], df["close"], lbp=14).williams_r()
     df["ROC"]         = ta.momentum.ROCIndicator(df["close"], window=12).roc()
     df["ATR"]         = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range()
-    # TTM Squeeze
     kc_mid            = df["close"].rolling(20).mean()
     atr20             = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=20).average_true_range()
     kc_upper          = kc_mid + 1.5 * atr20
@@ -315,7 +414,6 @@ def swing_trade_commentary(row, df, ticker, price, score, info):
     macd_hist = row["MACD_hist"]
     stoch_k   = row["StochRSI_k"]
     wr        = row["WilliamsR"]
-    bb_pct    = row["BB_pct"]
     adx       = row["ADX"]
     adx_pos   = row["ADX_pos"]
     adx_neg   = row["ADX_neg"]
@@ -328,23 +426,22 @@ def swing_trade_commentary(row, df, ticker, price, score, info):
     nearest_support    = max([s for s in support_levels if s < price], default=price * 0.92)
     nearest_resistance = min([r for r in resistance_levels if r > price], default=price * 1.10)
 
-    signals   = []
-    setup     = "none"
+    signals  = []
+    setup    = "none"
 
-    golden_cross = pd.notna(ema50) and pd.notna(ema200) and ema50 > ema200
-    death_cross  = pd.notna(ema50) and pd.notna(ema200) and ema50 < ema200
-    above_ema200 = pd.notna(ema200) and price > ema200
-    rsi_oversold = pd.notna(rsi) and rsi < 40
-    rsi_extreme  = pd.notna(rsi) and rsi < 30
+    golden_cross   = pd.notna(ema50) and pd.notna(ema200) and ema50 > ema200
+    death_cross    = pd.notna(ema50) and pd.notna(ema200) and ema50 < ema200
+    above_ema200   = pd.notna(ema200) and price > ema200
+    rsi_oversold   = pd.notna(rsi) and rsi < 40
+    rsi_extreme    = pd.notna(rsi) and rsi < 30
     rsi_overbought = pd.notna(rsi) and rsi > 70
-    macd_bullish = pd.notna(macd_hist) and macd_hist > 0
-    stoch_low    = pd.notna(stoch_k) and stoch_k < 20
-    stoch_high   = pd.notna(stoch_k) and stoch_k > 80
-    wr_oversold  = pd.notna(wr) and wr < -80
-    strong_trend = pd.notna(adx) and adx > 25
-    trending_up  = strong_trend and pd.notna(adx_pos) and pd.notna(adx_neg) and adx_pos > adx_neg
+    macd_bullish   = pd.notna(macd_hist) and macd_hist > 0
+    stoch_low      = pd.notna(stoch_k) and stoch_k < 20
+    stoch_high     = pd.notna(stoch_k) and stoch_k > 80
+    wr_oversold    = pd.notna(wr) and wr < -80
+    strong_trend   = pd.notna(adx) and adx > 25
+    trending_up    = strong_trend and pd.notna(adx_pos) and pd.notna(adx_neg) and adx_pos > adx_neg
 
-    # ── Swing Setup Detection ─────────────────────────────────
     # Setup A: Pullback-to-EMA buy in uptrend
     if golden_cross and above_ema200 and rsi_oversold and macd_bullish:
         stop   = nearest_support - atr * 0.5
@@ -386,7 +483,7 @@ def swing_trade_commentary(row, df, ticker, price, score, info):
             f"&nbsp;|&nbsp; First Target: ${target:,.4f} (+{((target-price)/price)*100:.1f}%) "
             f"&nbsp;|&nbsp; R:R {rr:.1f}x", "green"))
 
-    # Setup D: Short/avoid signal
+    # Setup D: Overbought in downtrend
     elif death_cross and rsi_overbought and stoch_high:
         setup = "overbought_short"
         signals.append(("🔴 CAUTION — Overbought in Downtrend",
@@ -410,18 +507,18 @@ def swing_trade_commentary(row, df, ticker, price, score, info):
                 "Wait for extreme oversold confluence before considering entry.", "orange"))
 
     # 52-week context
-    if week52_high and week52_low:
+    if week52_high and week52_low and week52_high != week52_low:
         pct_from_high = ((price - week52_high) / week52_high) * 100
         pct_from_low  = ((price - week52_low)  / week52_low)  * 100
-        range_pos     = ((price - week52_low) / (week52_high - week52_low)) * 100 if week52_high != week52_low else 50
+        range_pos     = ((price - week52_low) / (week52_high - week52_low)) * 100
         signals.append(("📅 52-Week Range Context",
             f"52w High: ${week52_high:,.4f} &nbsp;|&nbsp; 52w Low: ${week52_low:,.4f} &nbsp;|&nbsp; "
-            f"Current position in range: <b>{range_pos:.0f}%</b>",
+            f"Position in range: <b>{range_pos:.0f}%</b>",
             f"Price is {abs(pct_from_high):.1f}% below 52w high and {abs(pct_from_low):.1f}% above 52w low. "
             f"{'Near lows — potential value zone for swing entries.' if range_pos < 30 else 'Near highs — higher risk for new entries, tighter stops needed.' if range_pos > 70 else 'Mid-range — no particular edge from price position alone.'}",
             "blue"))
 
-    # ATR context
+    # ATR position sizing
     signals.append(("📏 ATR Volatility — Position Sizing",
         f"ATR (14): ${atr:,.4f} &nbsp;|&nbsp; "
         f"Suggested stop distance: ${atr*1.5:,.4f} (1.5× ATR) &nbsp;|&nbsp; ${atr*2:,.4f} (2× ATR)",
@@ -433,32 +530,30 @@ def swing_trade_commentary(row, df, ticker, price, score, info):
 
 # ── LOAD DATA ──────────────────────────────────────────────────
 
-period   = "2y" if timeframe == "Daily" else "5y"
 interval = "1d" if timeframe == "Daily" else "1wk"
 
 with st.spinner(f"Loading {ticker} data..."):
-    df   = get_stock_data(ticker, period, interval)
+    df   = get_stock_data(ticker, date_start, date_end, interval)
     info = get_stock_info(ticker)
 
 if df.empty or len(df) < 30:
-    st.error(f"Not enough data for {ticker}. Try refreshing.")
+    st.error(f"Not enough data for {ticker}. Try a wider date range or force refresh.")
     st.stop()
 
-df    = compute_indicators(df)
-df    = df.dropna(subset=["RSI"]).reset_index(drop=True)
+df     = compute_indicators(df)
+df     = df.dropna(subset=["RSI"]).reset_index(drop=True)
 latest = df.iloc[-1]
 
-price = info.get("price") or float(latest["close"])
+price         = info.get("price") or float(latest["close"])
 score, bullish_count, bearish_count, indicators = composite_score(latest)
 neutral_count = 10 - bullish_count - bearish_count
 label         = signal_label(score)
 ts            = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 swing_signals, setup_type = swing_trade_commentary(latest, df, ticker, price, score, info)
+trend_label, trend_color  = detect_trend_structure(df, window=3)
 
-trend_label, trend_color = detect_trend_structure(df, window=3)
-
-# ── PRECOMPUTE VALUES ──────────────────────────────────────────
+# ── PRECOMPUTE DISPLAY VALUES ──────────────────────────────────
 
 rsi_val    = f"{latest['RSI']:.1f}"          if pd.notna(latest['RSI'])         else "N/A"
 stoch_val  = f"{latest['StochRSI_k']:.1f}"   if pd.notna(latest['StochRSI_k'])  else "N/A"
@@ -484,10 +579,9 @@ is_swing_suitable = ticker in SWING_TRADE_SUITABLE
 # ── HEADER ────────────────────────────────────────────────────
 
 st.markdown("#### 📈 ASX Stock Technical Dashboard")
-st.caption("Swing trade focused analysis — Daily & Weekly timeframes")
+st.caption(f"Swing trade focused analysis · {timeframe} · {date_start.strftime('%d %b %Y')} → {date_end.strftime('%d %b %Y')}")
 st.divider()
 
-# Stock name + price + signal
 st.markdown(
     f"<div style='display:flex; align-items:center; gap:10px; margin-bottom:4px'>"
     f"<h4 style='margin:0'>{info.get('name', stock_label)} ({ticker}) &nbsp; "
@@ -497,23 +591,21 @@ st.markdown(
 if info.get("sector"):
     st.caption(f"📂 {info.get('sector')} — {info.get('industry')}")
 
-# Swing suitability banner
 if is_swing_suitable:
     st.success("✅ **Swing Trade Suitable** — This stock has sufficient liquidity and volatility for active swing trading.")
 else:
     st.info("ℹ️ **ETF / Low-liquidity stock** — TA signals apply but this is better suited to DCA / long-term holding than active swing trading.")
 
-# Stock-specific note
 note = STOCK_NOTES.get(ticker, "")
 if note:
     st.markdown(f"> 💡 {note}")
 
 st.markdown("#### 📊 Key Metrics")
 m1, m2, m3, m4, m5, m6 = st.columns(6)
-m1.metric("💰 Price",       f"${price:,.4f}")
-m2.metric("📊 RSI (14)",    rsi_val)
-m3.metric("📉 MACD Hist",   mhst_val)
-m4.metric("🎯 Score",       f"{score} pts")
+m1.metric("💰 Price",     f"${price:,.4f}")
+m2.metric("📊 RSI (14)",  rsi_val)
+m3.metric("📉 MACD Hist", mhst_val)
+m4.metric("🎯 Score",     f"{score} pts")
 if info.get("week52_high"): m5.metric("📈 52w High", f"${info['week52_high']:,.4f}")
 if info.get("week52_low"):  m6.metric("📉 52w Low",  f"${info['week52_low']:,.4f}")
 
@@ -535,15 +627,6 @@ st.divider()
 # ── SWING TRADE ANALYSIS ──────────────────────────────────────
 
 st.markdown("### 🎯 Swing Trade Analysis")
-
-color_map_setup = {
-    "pullback_buy":       "#22c55e",
-    "oversold_reversal":  "#fbbf24",
-    "momentum_breakout":  "#22c55e",
-    "overbought_short":   "#f87171",
-    "none":               "#9ca3af",
-}
-setup_color = color_map_setup.get(setup_type, "#9ca3af")
 
 signal_color_map = {
     "green":  "#22c55e",
@@ -654,7 +737,7 @@ with row1_r:
                        annotation_text=f"R ${r:,.4f}", annotation_position="top left")
     fig2.update_layout(height=500, margin=dict(t=30, b=10), xaxis_rangeslider_visible=False)
     st.plotly_chart(fig2, use_container_width=True)
-    st.caption("BB below lower = oversold 🟢; above upper = overbought 🔴. EMA50 (green) / EMA200 (red) — Golden/Death Cross key signal.")
+    st.caption("BB below lower = oversold 🟢; above upper = overbought 🔴. EMA50 (green) / EMA200 (red).")
 
 st.divider()
 
@@ -776,7 +859,7 @@ with row4_r:
 
 st.divider()
 
-# ── GRAPHS — ROW 5: TTM Squeeze ──────────────────────────────
+# ── GRAPHS — ROW 5: TTM Squeeze  |  Volume ───────────────────
 
 row5_l, row5_r = st.columns(2)
 
@@ -789,7 +872,7 @@ with row5_l:
     fig_sq = go.Figure()
     fig_sq.add_trace(go.Bar(x=df["time"], y=df["squeeze_hist"],
         name="Momentum", marker_color=squeeze_colors))
-    fig_sq.add_trace(go.Scatter(x=df["time"], y=[0]*len(df), mode="markers",
+    fig_sq.add_trace(go.Scatter(x=df["time"], y=*len(df), mode="markers",
         marker=dict(color=dot_colors, size=6, symbol="circle"),
         name="Squeeze (black=on, lime=off)"))
     fig_sq.update_layout(height=400, margin=dict(t=30, b=10))
@@ -797,7 +880,6 @@ with row5_l:
     st.caption("Black dots = coiling for breakout. Lime = released. Green bars after squeeze = bullish breakout signal.")
 
 with row5_r:
-    # Volume chart
     st.markdown("<h4>📊 Volume</h4>", unsafe_allow_html=True)
     if "volume" in df.columns:
         vol_colors = ["green" if df["close"].iloc[i] >= df["open"].iloc[i] else "red"
@@ -810,8 +892,8 @@ with row5_r:
             name="20-period Avg", line=dict(color="#F59E0B", width=1.5, dash="dot")))
         fig_vol.update_layout(height=400, margin=dict(t=30, b=10))
         st.plotly_chart(fig_vol, use_container_width=True)
-        st.caption("Green = up day volume; red = down day volume. Volume above average on breakouts = confirmation. Low volume rallies = weak signal.")
+        st.caption("Green = up day volume; red = down day volume. Volume above average on breakouts = confirmation.")
     else:
         st.info("Volume data not available.")
 
-st.caption(f"Data: Yahoo Finance (yfinance) · Auto-refreshes every 5 min · Last run: {ts} · {timeframe} timeframe")
+st.caption(f"Data: Yahoo Finance (yfinance) · Auto-refreshes every 5 min · Last run: {ts} · {timeframe} · {date_start.strftime('%d %b %Y')} → {date_end.strftime('%d %b %Y')}")
