@@ -605,6 +605,25 @@ def build_chart3(df):
     return "⚪ Not enough swing points yet", "gray"
 
 
+def detect_trend_structure(df, window=3):
+    closes = df["close"].values
+    highs_pts, lows_pts = [], []
+    for i in range(window, len(closes) - window):
+        if closes[i] == max(closes[max(0, i-window):i+window+1]):
+            highs_pts.append(closes[i])
+        if closes[i] == min(closes[max(0, i-window):i+window+1]):
+            lows_pts.append(closes[i])
+    if len(highs_pts) >= 2 and len(lows_pts) >= 2:
+        hh = highs_pts[-1] > highs_pts[-2]
+        hl = lows_pts[-1]  > lows_pts[-2]
+        lh = highs_pts[-1] < highs_pts[-2]
+        ll = lows_pts[-1]  < lows_pts[-2]
+        if hh and hl:   return "🟢 Uptrend - Higher Highs & Higher Lows", "green"
+        elif lh and ll: return "🔴 Downtrend - Lower Highs & Lower Lows", "red"
+        else:           return "⚪ Choppy - No clear structure", "gray"
+    return "⚪ Not enough swing points yet", "gray"
+
+
 def detect_support_resistance(df, window=3, num_levels=4):
     highs = df["high"] if "high" in df.columns else df["close"]
     lows  = df["low"]  if "low"  in df.columns else df["close"]
