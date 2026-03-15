@@ -284,16 +284,16 @@ def build_chart1(df):
     fig.add_trace(go.Scatter(
         x=buy_df["time"], y=buy_df["buy_signal"].astype(float) * 0.995,
         mode="markers", name="Buy Signal",
-        marker=dict(symbol="triangle-up", size=12, color="#22c55e",
-                    line=dict(color="white", width=1))))
+        marker=dict(symbol="triangle-up", size=14, color="#0077BB",
+                    line=dict(color="white", width=1.5))))
     fig.add_trace(go.Scatter(
         x=sell_df["time"], y=sell_df["sell_signal"].astype(float) * 1.005,
         mode="markers", name="Sell Signal",
-        marker=dict(symbol="triangle-down", size=12, color="#ef4444",
-                    line=dict(color="white", width=1))))
+        marker=dict(symbol="triangle-down", size=14, color="#EE7733",
+                    line=dict(color="white", width=1.5))))
 
     fig.update_layout(
-        title="Triple Supertrend Chart 1",
+        title=None,
         height=600,
         margin=dict(t=50, b=10),
         xaxis_rangeslider_visible=False,
@@ -404,9 +404,9 @@ def build_chart2(df):
         mode="markers+text",
         name="All 3 Bullish",
         text=["▲"] * len(bull_signal_df),
-        textfont=dict(size=22, color="#00e676"),
-        marker=dict(symbol="triangle-up", size=18, color="#00e676",
-                    line=dict(color="white", width=1)),
+        textfont=dict(size=22, color="#0077BB"),
+        marker=dict(symbol="triangle-up", size=18, color="#0077BB",
+                    line=dict(color="white", width=1.5)),
         textposition="bottom center"))
 
     fig.add_trace(go.Scatter(
@@ -415,13 +415,13 @@ def build_chart2(df):
         mode="markers+text",
         name="All 3 Bearish",
         text=["▼"] * len(bear_signal_df),
-        textfont=dict(size=22, color="#ff1744"),
-        marker=dict(symbol="triangle-down", size=18, color="#ff1744",
-                    line=dict(color="white", width=1)),
+        textfont=dict(size=22, color="#EE7733"),
+        marker=dict(symbol="triangle-down", size=18, color="#EE7733",
+                    line=dict(color="white", width=1.5)),
         textposition="top center"))
 
     fig.update_layout(
-        title="Triple Supertrend Chart 2  (Nordman-style)",
+        title=None,
         height=650,
         margin=dict(t=50, b=10),
         xaxis_rangeslider_visible=False,
@@ -553,9 +553,9 @@ def build_chart3(df):
             x=buy_df["time"], y=buy_df["low"].astype(float) * 0.990,
             mode="markers+text", name="BUY (all 3 bull + RSI>50)",
             text=["▲"] * len(buy_df),
-            textfont=dict(size=20, color="#00e676"),
-            marker=dict(symbol="triangle-up", size=16, color="#00e676",
-                        line=dict(color="white", width=1)),
+            textfont=dict(size=20, color="#0077BB"),
+            marker=dict(symbol="triangle-up", size=16, color="#0077BB",
+                        line=dict(color="white", width=1.5)),
             textposition="bottom center"))
 
     if not sell_df.empty:
@@ -563,20 +563,20 @@ def build_chart3(df):
             x=sell_df["time"], y=sell_df["high"].astype(float) * 1.010,
             mode="markers+text", name="SELL (all 3 bear + RSI<50)",
             text=["▼"] * len(sell_df),
-            textfont=dict(size=20, color="#ff1744"),
-            marker=dict(symbol="triangle-down", size=16, color="#ff1744",
-                        line=dict(color="white", width=1)),
+            textfont=dict(size=20, color="#EE7733"),
+            marker=dict(symbol="triangle-down", size=16, color="#EE7733",
+                        line=dict(color="white", width=1.5)),
             textposition="top center"))
 
     if not exit_df.empty:
         fig.add_trace(go.Scatter(
             x=exit_df["time"], y=exit_df["high"].astype(float) * 1.015,
             mode="markers", name="EXIT (ST flip or Fib BB touch)",
-            marker=dict(symbol="triangle-down", size=10, color="#fbbf24",
-                        line=dict(color="white", width=1))))
+            marker=dict(symbol="diamond", size=10, color="#fbbf24",
+                        line=dict(color="white", width=1.5))))
 
     fig.update_layout(
-        title="Triple Supertrend Chart 3  (RSI + Fib BB — TRW_meir style)",
+        title=None,
         height=650,
         margin=dict(t=50, b=10),
         xaxis_rangeslider_visible=False,
@@ -983,7 +983,7 @@ st.divider()
 
 # ── TRIPLE SUPERTREND STATUS ───────────────────────────────────
 
-st.markdown("### 📊 Triple Supertrend")
+st.markdown("### 📊 Triple Supertrend — Current Status")
 bulls = sum(1 for d in [latest["dir1"], latest["dir2"], latest["dir3"]] if d == 1)
 bears = sum(1 for d in [latest["dir1"], latest["dir2"], latest["dir3"]] if d == -1)
 
@@ -1014,30 +1014,31 @@ else:
 
 # ── CHART 1 ────────────────────────────────────────────────────
 
+st.markdown("### Chart 1 — ST Lines (any flip signals)")
 fig1 = build_chart1(df)
 st.plotly_chart(fig1, use_container_width=True)
 st.caption(
-    "**Triple Supertrend Chart 1** — Each ST line changes colour with direction: "
-    "green = bullish (dynamic support below price), red = bearish (dynamic resistance above price). "
-    "No ghost lines. Green ▲ = any ST flipped bullish. Red ▼ = any ST flipped bearish.")
+    "Each ST line changes colour with direction: "
+    "green = bullish support below price, red = bearish resistance above price. "
+    "Blue ▲ = any ST flipped bullish. Orange ▼ = any ST flipped bearish.")
 
 st.divider()
 
 # ── CHART 2 ────────────────────────────────────────────────────
 
+st.markdown("### Chart 2 — Nordman-style (candle tint + full-alignment arrows)")
 fig2 = build_chart2(df)
 st.plotly_chart(fig2, use_container_width=True)
 st.caption(
-    "**Triple Supertrend Chart 2 (Nordman-style)** — "
     "Candle colour reflects ST alignment: bright green = 3/3 bull, light green = 2/3, light red = 1/3, bright red = 0/3. "
-    "Green background zone = all 3 bullish. Red background zone = all 3 bearish. "
-    "EMA 200 (yellow dotted). Large ▲/▼ arrows fire only when all 3 STs first align in the same direction.")
+    "Green background = all 3 bullish. Red background = all 3 bearish. "
+    "EMA 200 (yellow dotted). Blue ▲ / Orange ▼ arrows fire only when all 3 STs first align.")
 
 st.divider()
 
 # ── CHART 3 ────────────────────────────────────────────────────
 
-st.markdown("### 📊 Triple Supertrend Chart 3 — RSI + Fibonacci BB")
+st.markdown("### Chart 3 — RSI + Fibonacci BB (confluence signals)")
 
 # Chart 3 current status
 c3_bulls = sum(1 for d in [latest.get("c3_dir1", 0), latest.get("c3_dir2", 0), latest.get("c3_dir3", 0)] if d == 1)
@@ -1070,11 +1071,10 @@ else:
 fig3 = build_chart3(df)
 st.plotly_chart(fig3, use_container_width=True)
 st.caption(
-    "**Triple Supertrend Chart 3 (RSI + Fib BB)** — "
     "ST params: (10,1.0), (11,2.0), (12,3.0). "
-    "🟢 BUY: all 3 STs bullish + RSI(7) > 50 on first alignment bar. "
-    "🔴 SELL: all 3 STs bearish + RSI(7) < 50 on first alignment bar. "
-    "🟡 EXIT: any ST flips OR price touches Fibonacci BB (SMA 200 ± 2.618σ). "
+    "Blue ▲ BUY: all 3 STs bullish + RSI(7) > 50, first alignment bar only. "
+    "Orange ▼ SELL: all 3 STs bearish + RSI(7) < 50, first alignment bar only. "
+    "Yellow ◆ EXIT: any ST flips direction OR price touches Fibonacci BB (SMA 200 ± 2.618σ). "
     "Based on TradingView script by TRW_meir.")
 
 st.divider()
