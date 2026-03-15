@@ -52,25 +52,67 @@ SWING_TRADE_SUITABLE = {"PDN.AX", "CXO.AX", "NST.AX", "PLS.AX", "EPM.AX"}
 st.sidebar.header("Settings")
 stock_label = st.sidebar.selectbox("Select Stock / ETF", list(ASX_STOCKS.keys()))
 ticker      = ASX_STOCKS[stock_label]
-timeframe   = st.sidebar.radio("Timeframe", ["Daily", "Weekly"])
+timeframe   = st.sidebar.radio("Timeframe", ["Hourly", "Daily", "Weekly", "Monthly"])
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Chart Range**")
 range_option = st.sidebar.selectbox(
     "Quick Select",
-    ["3 Months", "6 Months", "1 Year", "2 Years", "3 Years", "5 Years", "Custom"],
-    index=3
+    ["1 Day", "1 Week", "1 Month", "3 Months", "6 Months", "1 Year",
+     "2 Years", "3 Years", "5 Years", "Custom"],
+    index=5          # default: 1 Year
 )
-range_map = {"3 Months": 90, "6 Months": 180, "1 Year": 365,
-             "2 Years": 730, "3 Years": 1095, "5 Years": 1825}
+range_map = {
+    "1 Day":    1,   "1 Week":  7,   "1 Month":  30,
+    "3 Months": 90,  "6 Months": 180, "1 Year":  365,
+    "2 Years":  730, "3 Years": 1095, "5 Years": 1825,
+}
 
 if range_option == "Custom":
     col_s, col_e = st.sidebar.columns(2)
-    date_start = col_s.date_input("From", value=date.today() - timedelta(days=730))
+    date_start = col_s.date_input("From", value=date.today() - timedelta(days=365))
     date_end   = col_e.date_input("To",   value=date.today())
 else:
     date_end   = date.today()
     date_start = date_end - timedelta(days=range_map[range_option])
+
+# ── Timeframe → yfinance interval mapping ──────────────────────
+INTERVAL_MAP = {
+    "Hourly":  "1h",
+    "Daily":   "1d",
+    "Weekly":  "1wk",
+    "Monthly": "1mo",
+}
+
+# yfinance only serves intraday data for the last 730 days max;
+# hourly data is limited to the last 60 days.
+RANGE_LIMITS = {
+    "Hourly":  60,    # max days yfinance will return 1h bars
+    "Daily":   None,  # no practical limit
+    "Weekly":  None,
+    "Monthly": None,
+}
+
+# Minimum bars needed for meaningful indicator calculation
+MIN_BARS = {
+    "Hourly":  30,
+    "Daily":   60,
+    "Weekly":  15,
+    "Monthly": 6,
+}
+
+# Clamp hourly range silently and warn the user
+range_days = (date_end - date_start).days
+if timeframe == "Hourly" and range_days > 60:
+    st.sidebar.warning("⚠️ Hourly data is limited to 60 days by Yahoo Finance. Range clamped to 60 days.")
+    date_start = date_end - timedelta(days=60)
+    range_days = 60
+
+# Monthly needs at least 6 months of data to be useful
+if timeframe == "Monthly" and range_days < 180:
+    st.sidebar.warning("⚠️ Monthly timeframe needs at least 6 months of range. Extending to 2 years.")
+    date_start = date_end - timedelta(days=730)
+    range_days = 730
 
 if st.sidebar.button("Force Refresh"):
     st.cache_data.clear()
@@ -843,15 +885,26 @@ def swing_trade_commentary(row, df, ticker, price, score, info):
 
 # ── LOAD DATA ──────────────────────────────────────────────────
 
-interval = "1d" if timeframe == "Daily" else "1wk"
+interval = INTERVAL_MAP[timeframe]
+min_bars = MIN_BARS[timeframe]
 
-with st.spinner(f"Loading {ticker} data..."):
+with st.spinner(f"Loading {ticker} data ({timeframe})..."):
     df   = get_stock_data(ticker, date_start, date_end, interval)
     info = get_stock_info(ticker)
 
-min_bars = 60 if interval == "1d" else 15
 if df.empty or len(df) < min_bars:
-    st.error(f"Not enough data for {ticker} ({len(df) if not df.empty else 0} bars). Try a wider range.")
+    friendly_combos = {
+        "Hourly":  "Try a range of 7–60 days with Hourly.",
+        "Daily":   "Try a range of at least 3 months with Daily.",
+        "Weekly":  "Try a range of at least 6 months with Weekly.",
+        "Monthly": "Try a range of at least 2 years with Monthly.",
+    }
+    bar_count = len(df) if not df.empty else 0
+    st.error(
+        f"Not enough data for **{ticker}** on **{timeframe}** timeframe "
+        f"({bar_count} bars returned, need at least {min_bars}). "
+        f"{friendly_combos.get(timeframe, 'Try a wider date range.')}"
+    )
     st.stop()
 
 df = compute_indicators(df)
@@ -865,8 +918,8 @@ df     = triple_supertrend_signals(df)
 df     = compute_chart3_signals(df)
 latest = df.iloc[-1]
 
-if pd.isna(latest["EMA_200"]) and interval == "1wk":
-    st.warning("⚠️ EMA 200 not available — extend range to 4+ years for full weekly indicator coverage.")
+if pd.isna(latest["EMA_200"]) and timeframe in ("Weekly", "Monthly"):
+    st.warning("⚠️ EMA 200 not available — extend range to 4+ years for full indicator coverage on this timeframe.")
 
 price         = info.get("price") or float(latest["close"])
 score, bullish_count, bearish_count, indicators = composite_score(latest)
