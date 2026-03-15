@@ -272,12 +272,13 @@ def triple_supertrend_signals(df):
 
 
 # ── CHART HELPERS ─────────────────────────────────────────────
-# Efficient ST line rendering: 2 traces per ST (bull + bear), NaN where inactive.
-# This replaces the old per-segment approach that created N-1 traces per ST line.
+# All ST lines use the same two colours: green (bullish, below price as support)
+# and red (bearish, above price as resistance) — matching the Nordman visual style.
+# No per-ST colour variation.
 
-def add_st_line(fig, df, st_col, dir_col, bull_color, bear_color, name):
-    """Draw one ST as two continuous traces (bull/bear) with NaN breaks. 6 traces total
-    for all 3 STs vs the old approach's ~250+ micro-traces."""
+def add_st_line(fig, df, st_col, dir_col, name, bull_color="#00c853", bear_color="#ff1744", width=2):
+    """Draw one ST as two traces: green when bullish, red when bearish.
+    NaN breaks split cleanly at direction changes."""
     x = df["time"].values
     y = df[st_col].values.astype(float)
     d = df[dir_col].values
@@ -287,24 +288,28 @@ def add_st_line(fig, df, st_col, dir_col, bull_color, bear_color, name):
     bull_y[d != 1]  = np.nan
     bear_y[d != -1] = np.nan
 
-    # Bridge the gap at each transition so lines visually connect
+    # Extend one extra point at each transition so lines connect visually
     for i in range(1, len(d)):
-        if d[i] != d[i-1] and not np.isnan(y[i-1]) and not np.isnan(y[i]):
+        if d[i] != d[i-1]:
             if d[i] == 1:
-                bull_y[i-1] = y[i-1]   # pull the last bear point into the bull trace
+                bull_y[i-1] = y[i-1]
             else:
-                bear_y[i-1] = y[i-1]   # pull the last bull point into the bear trace
+                bear_y[i-1] = y[i-1]
+
+    # Underscores in legendgroup prevent Plotly "undefined" legend bug
+    lg_bull = name.replace(" ", "_") + "_bull"
+    lg_bear = name.replace(" ", "_") + "_bear"
 
     fig.add_trace(go.Scatter(
         x=x, y=bull_y, mode="lines",
-        name=f"{name} Bull", line=dict(color=bull_color, width=2),
-        connectgaps=False, legendgroup=f"{name}_bull",
-        hovertemplate=f"{name} Bull: %{{y:.4f}}<extra></extra>"))
+        name=f"{name} Bull", line=dict(color=bull_color, width=width),
+        connectgaps=False, legendgroup=lg_bull,
+        hovertemplate=f"{name}: %{{y:.4f}}<extra></extra>"))
     fig.add_trace(go.Scatter(
         x=x, y=bear_y, mode="lines",
-        name=f"{name} Bear", line=dict(color=bear_color, width=2),
-        connectgaps=False, legendgroup=f"{name}_bear",
-        hovertemplate=f"{name} Bear: %{{y:.4f}}<extra></extra>"))
+        name=f"{name} Bear", line=dict(color=bear_color, width=width),
+        connectgaps=False, legendgroup=lg_bear,
+        hovertemplate=f"{name}: %{{y:.4f}}<extra></extra>"))
 
 
 def build_chart1(df):
@@ -316,9 +321,9 @@ def build_chart1(df):
         increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
         increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
 
-    add_st_line(fig, df, "st1", "dir1", "#34d399", "#f87171", "ST1(7,3.0)")
-    add_st_line(fig, df, "st2", "dir2", "#60a5fa", "#fb923c", "ST2(14,2.0)")
-    add_st_line(fig, df, "st3", "dir3", "#c084fc", "#f472b6", "ST3(21,1.0)")
+    add_st_line(fig, df, "st1", "dir1", "ST1 (7, 3.0)")
+    add_st_line(fig, df, "st2", "dir2", "ST2 (14, 2.0)")
+    add_st_line(fig, df, "st3", "dir3", "ST3 (21, 1.0)")
 
     buy_df  = df[df["buy_signal"].notna()]
     sell_df = df[df["sell_signal"].notna()]
@@ -402,14 +407,10 @@ def build_chart2(df):
             increasing_line_color=color, decreasing_line_color=color,
             increasing_fillcolor=color,  decreasing_fillcolor=color))
 
-    # ST lines (efficient 2-trace approach)
-    st_configs = [
-        ("st1", "dir1", "#00e676", "#ff1744", "ST1 (7, 3.0)"),
-        ("st2", "dir2", "#00bcd4", "#ff9800", "ST2 (14, 2.0)"),
-        ("st3", "dir3", "#ce93d8", "#f06292", "ST3 (21, 1.0)"),
-    ]
-    for st_col, dir_col, bull_c, bear_c, label in st_configs:
-        add_st_line(fig, df, st_col, dir_col, bull_c, bear_c, label)
+    # ST lines — all green when bull, all red when bear (Nordman style)
+    add_st_line(fig, df, "st1", "dir1", "ST1 (7, 3.0)")
+    add_st_line(fig, df, "st2", "dir2", "ST2 (14, 2.0)")
+    add_st_line(fig, df, "st3", "dir3", "ST3 (21, 1.0)")
 
     # EMA 200
     if df["EMA_200"].notna().any():
@@ -418,24 +419,36 @@ def build_chart2(df):
             name="EMA 200",
             line=dict(color="#fbbf24", width=2, dash="dot")))
 
-    # Big arrows: ALL 3 bullish + Stoch RSI K < 20 (oversold confirms long)
-    #             ALL 3 bearish + Stoch RSI K > 80 (overbought confirms short)
-    all3_bull_rows = df[(df["dir1"] == 1) & (df["dir2"] == 1) & (df["dir3"] == 1)]
-    all3_bear_rows = df[(df["dir1"] == -1) & (df["dir2"] == -1) & (df["dir3"] == -1)]
-
-    # Fire arrow only on the first bar of alignment (transition into all-3)
+    # ── Nordman arrow conditions (per nordman-algorithms.com spec) ──
+    # BULLISH: all 3 STs green + price above EMA 200 + StochRSI K < 20
+    # BEARISH: all 3 STs red   + price below EMA 200 + StochRSI K > 80
+    # Arrow fires on the FIRST bar that enters the alignment (no repeat until it exits and re-enters)
+    # EMA/StochRSI filters are skipped gracefully if data not available
     bull_align_starts = []
     bear_align_starts = []
     prev_bulls = prev_bears = False
     for i, row in df.iterrows():
-        cur_bulls = (row["dir1"]==1 and row["dir2"]==1 and row["dir3"]==1)
-        cur_bears = (row["dir1"]==-1 and row["dir2"]==-1 and row["dir3"]==-1)
-        if cur_bulls and not prev_bulls:
+        all3_bull = (row["dir1"] == 1  and row["dir2"] == 1  and row["dir3"] == 1)
+        all3_bear = (row["dir1"] == -1 and row["dir2"] == -1 and row["dir3"] == -1)
+
+        # EMA 200 filter (skip if NaN)
+        ema200 = row.get("EMA_200", float("nan"))
+        if pd.notna(ema200):
+            all3_bull = all3_bull and (row["close"] > ema200)
+            all3_bear = all3_bear and (row["close"] < ema200)
+
+        # StochRSI K filter (skip if NaN)
+        stoch_k = row.get("StochRSI_k", float("nan"))
+        if pd.notna(stoch_k):
+            all3_bull = all3_bull and (stoch_k < 20)
+            all3_bear = all3_bear and (stoch_k > 80)
+
+        if all3_bull and not prev_bulls:
             bull_align_starts.append(i)
-        if cur_bears and not prev_bears:
+        if all3_bear and not prev_bears:
             bear_align_starts.append(i)
-        prev_bulls = cur_bulls
-        prev_bears = cur_bears
+        prev_bulls = all3_bull
+        prev_bears = all3_bear
 
     bull_signal_df = df.loc[bull_align_starts]
     bear_signal_df = df.loc[bear_align_starts]
@@ -555,16 +568,16 @@ def build_chart3(df):
         increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
         increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
 
-    # Three ST lines — distinct opacity steps like the TradingView version
+    # Three ST lines — all green/red, varying line width to distinguish them
     st3_configs = [
-        ("c3_st1", "c3_dir1", "#00e5ff", "#ff6d00", "ST1 (10,1.0)", 1.0),
-        ("c3_st2", "c3_dir2", "#40c4ff", "#ff9100", "ST2 (11,2.0)", 0.75),
-        ("c3_st3", "c3_dir3", "#80d8ff", "#ffab40", "ST3 (12,3.0)", 0.5),
+        ("c3_st1", "c3_dir1", "ST1 (10,1.0)", 2.5),
+        ("c3_st2", "c3_dir2", "ST2 (11,2.0)", 2.0),
+        ("c3_st3", "c3_dir3", "ST3 (12,3.0)", 1.5),
     ]
-    for st_col, dir_col, bull_c, bear_c, label, _op in st3_configs:
+    for st_col, dir_col, label, w in st3_configs:
         if st_col not in df.columns:
             continue
-        add_st_line(fig, df, st_col, dir_col, bull_c, bear_c, label)
+        add_st_line(fig, df, st_col, dir_col, label, width=w)
 
     # Fibonacci Bollinger Bands (200, 2.618)
     if df["c3_fib_upper"].notna().any():
@@ -1085,7 +1098,9 @@ st.plotly_chart(fig2, use_container_width=True)
 st.caption(
     "Candle colour reflects ST alignment: bright green = 3/3 bull, light green = 2/3, light red = 1/3, bright red = 0/3. "
     "Green background = all 3 bullish. Red background = all 3 bearish. "
-    "EMA 200 (yellow dotted). Blue ▲ / Orange ▼ arrows fire only when all 3 STs first align.")
+    "EMA 200 (yellow dotted). "
+    "Blue ▲ signal: all 3 STs green + price above EMA 200 + StochRSI K < 20. "
+    "Orange ▼ signal: all 3 STs red + price below EMA 200 + StochRSI K > 80.")
 
 st.divider()
 
