@@ -186,6 +186,13 @@ def get_stock_data(ticker, start_date, end_date, interval):
         df = df.reset_index()
         df.columns = [c[0].lower() if isinstance(c, tuple) else c.lower() for c in df.columns]
         df = df.rename(columns={"date": "time", "datetime": "time"})
+        # Strip timezone info — prevents DST offset misalignment between
+        # go.Candlestick (timezone-naive) and go.Scatter ST line traces
+        if pd.api.types.is_datetime64tz_dtype(df["time"]):
+            df["time"] = df["time"].dt.tz_localize(None)
+        # Ensure time is plain date for daily/weekly/monthly (no time component)
+        if interval in ("1d", "1wk", "1mo"):
+            df["time"] = pd.to_datetime(df["time"]).dt.normalize()
         for col in ["open", "high", "low", "close"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
         df = df.dropna(subset=["close"]).reset_index(drop=True)
@@ -466,131 +473,9 @@ def build_chart1(df):
     return fig
 
 
-# ── CHART 2: Nordman-style ─────────────────────────────────────
-# Green line below price (support) when bullish, red line above (resistance) when bearish
-# Candles coloured by how many STs are bullish
-# EMA 200 shown
-# Big arrows only when ALL 3 align AND Stoch RSI confirms
 
-def build_chart2(df):
-    fig = go.Figure()
 
-    # Background shading: green zone when all 3 bull, red zone when all 3 bear
-    all_bull = (df["dir1"] == 1) & (df["dir2"] == 1) & (df["dir3"] == 1)
-    all_bear = (df["dir1"] == -1) & (df["dir2"] == -1) & (df["dir3"] == -1)
 
-    def add_bg_zones(fig, df, mask, color):
-        in_zone = False
-        start   = None
-        for i, val in enumerate(mask):
-            if val and not in_zone:
-                in_zone = True
-                start   = df["time"].iloc[i]
-            elif not val and in_zone:
-                in_zone = False
-                fig.add_vrect(x0=start, x1=df["time"].iloc[i-1],
-                              fillcolor=color, opacity=0.08,
-                              layer="below", line_width=0)
-        if in_zone:
-            fig.add_vrect(x0=start, x1=df["time"].iloc[-1],
-                          fillcolor=color, opacity=0.08,
-                          layer="below", line_width=0)
-
-    add_bg_zones(fig, df, all_bull, "#22c55e")
-    add_bg_zones(fig, df, all_bear, "#ef4444")
-
-    # Single Candlestick — standard colours, continuous time axis
-    # Candle tinting removed: the background zone shading already shows bull/bear context
-    fig.add_trace(go.Candlestick(
-        x=df["time"], open=df["open"], high=df["high"],
-        low=df["low"], close=df["close"],
-        name="Price",
-        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
-        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444",
-        showlegend=False))
-
-    # ST lines — all green when bull, all red when bear (Nordman style)
-    add_st_line(fig, df, "st1", "dir1", "ST1 (7, 3.0)")
-    add_st_line(fig, df, "st2", "dir2", "ST2 (14, 2.0)")
-    add_st_line(fig, df, "st3", "dir3", "ST3 (21, 1.0)")
-
-    # EMA 200
-    if df["EMA_200"].notna().any():
-        fig.add_trace(go.Scatter(
-            x=df["time"], y=df["EMA_200"],
-            name="EMA 200",
-            line=dict(color="#fbbf24", width=2, dash="dot")))
-
-    # ── Nordman arrow conditions (per nordman-algorithms.com spec) ──
-    # BULLISH: all 3 STs green + price above EMA 200 + StochRSI K < 20
-    # BEARISH: all 3 STs red   + price below EMA 200 + StochRSI K > 80
-    # Arrow fires on the FIRST bar that enters the alignment (no repeat until it exits and re-enters)
-    # EMA/StochRSI filters are skipped gracefully if data not available
-    bull_align_starts = []
-    bear_align_starts = []
-    prev_bulls = prev_bears = False
-    for i, row in df.iterrows():
-        all3_bull = (row["dir1"] == 1  and row["dir2"] == 1  and row["dir3"] == 1)
-        all3_bear = (row["dir1"] == -1 and row["dir2"] == -1 and row["dir3"] == -1)
-
-        # EMA 200 filter (skip if NaN)
-        ema200 = row.get("EMA_200", float("nan"))
-        if pd.notna(ema200):
-            all3_bull = all3_bull and (row["close"] > ema200)
-            all3_bear = all3_bear and (row["close"] < ema200)
-
-        # StochRSI K filter (skip if NaN)
-        stoch_k = row.get("StochRSI_k", float("nan"))
-        if pd.notna(stoch_k):
-            all3_bull = all3_bull and (stoch_k < 20)
-            all3_bear = all3_bear and (stoch_k > 80)
-
-        if all3_bull and not prev_bulls:
-            bull_align_starts.append(i)
-        if all3_bear and not prev_bears:
-            bear_align_starts.append(i)
-        prev_bulls = all3_bull
-        prev_bears = all3_bear
-
-    bull_signal_df = df.loc[bull_align_starts]
-    bear_signal_df = df.loc[bear_align_starts]
-
-    fig.add_trace(go.Scatter(
-        x=bull_signal_df["time"],
-        y=bull_signal_df["low"].astype(float) * 0.990,
-        mode="markers+text",
-        name="All 3 Bullish",
-        text=["▲"] * len(bull_signal_df),
-        textfont=dict(size=22, color="#0077BB"),
-        marker=dict(symbol="triangle-up", size=18, color="#0077BB",
-                    line=dict(color="white", width=1.5)),
-        textposition="bottom center"))
-
-    fig.add_trace(go.Scatter(
-        x=bear_signal_df["time"],
-        y=bear_signal_df["high"].astype(float) * 1.010,
-        mode="markers+text",
-        name="All 3 Bearish",
-        text=["▼"] * len(bear_signal_df),
-        textfont=dict(size=22, color="#EE7733"),
-        marker=dict(symbol="triangle-down", size=18, color="#EE7733",
-                    line=dict(color="white", width=1.5)),
-        textposition="top center"))
-
-    fig.update_layout(
-        title=None,
-        height=650,
-        margin=dict(t=50, b=10),
-        xaxis=dict(
-            rangeslider_visible=False,
-            range=[str(df["time"].iloc[0]), str(df["time"].iloc[-1])],
-            type="date",
-        ),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        legend_grouptitlefont_color="rgba(0,0,0,0)",
-        plot_bgcolor="#0e1117",
-        paper_bgcolor="rgba(0,0,0,0)")
-    return fig
 # Based on TradingView script by TRW_meir (jw3P5XtU)
 # ST params: (10,1.0), (11,2.0), (12,3.0) — tighter ATR periods than Chart 1 & 2
 # BUY:  all 3 STs bullish AND RSI(7) > 50 — first bar of full alignment only
@@ -1362,7 +1247,7 @@ is_swing_suitable = ticker in SWING_TRADE_SUITABLE
 # ── HEADER ─────────────────────────────────────────────────────
 
 st.markdown("#### ASX Stock Technical Dashboard")
-APP_VERSION = "v1.0.45"
+APP_VERSION = "v1.0.47"
 st.caption(f"{APP_VERSION} | Swing trade focused analysis | {timeframe} | {date_start.strftime('%d %b %Y')} to {date_end.strftime('%d %b %Y')}")
 st.divider()
 
@@ -1531,21 +1416,6 @@ st.caption(
     "green = bullish support below price, red = bearish resistance above price. "
     "Blue ▲ = any ST flipped bullish. Orange ▼ = any ST flipped bearish.")
 
-st.divider()
-
-# ── CHART 2 ────────────────────────────────────────────────────
-
-st.markdown("### Chart 2 — Nordman-style (candle tint + full-alignment arrows)")
-fig2 = build_chart2(df)
-st.plotly_chart(fig2, use_container_width=True)
-st.caption(
-    "Candle colour reflects ST alignment: bright green = 3/3 bull, light green = 2/3, light red = 1/3, bright red = 0/3. "
-    "Green background = all 3 bullish. Red background = all 3 bearish. "
-    "EMA 200 (yellow dotted). "
-    "Blue ▲ signal: all 3 STs green + price above EMA 200 + StochRSI K < 20. "
-    "Orange ▼ signal: all 3 STs red + price below EMA 200 + StochRSI K > 80.")
-
-st.divider()
 
 # ── CHART 3 ────────────────────────────────────────────────────
 
