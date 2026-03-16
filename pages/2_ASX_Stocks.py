@@ -1368,7 +1368,8 @@ is_swing_suitable = ticker in SWING_TRADE_SUITABLE
 # ── HEADER ─────────────────────────────────────────────────────
 
 st.markdown("#### ASX Stock Technical Dashboard")
-st.caption(f"Swing trade focused analysis | {timeframe} | {date_start.strftime('%d %b %Y')} to {date_end.strftime('%d %b %Y')}")
+APP_VERSION = "v1.0.42"
+st.caption(f"{APP_VERSION} | Swing trade focused analysis | {timeframe} | {date_start.strftime('%d %b %Y')} to {date_end.strftime('%d %b %Y')}")
 st.divider()
 
 st.markdown(
