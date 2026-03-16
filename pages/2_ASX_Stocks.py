@@ -458,7 +458,7 @@ def build_chart1(df):
         title=None,
         height=600,
         margin=dict(t=50, b=10),
-        xaxis_rangeslider_visible=False,
+        xaxis=dict(rangeslider_visible=False, type="date"),
         legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
         legend_grouptitlefont_color="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -581,8 +581,11 @@ def build_chart2(df):
         title=None,
         height=650,
         margin=dict(t=50, b=10),
-        xaxis_rangeslider_visible=False,
-        xaxis=dict(range=[df["time"].iloc[0], df["time"].iloc[-1]]),
+        xaxis=dict(
+            rangeslider_visible=False,
+            range=[str(df["time"].iloc[0]), str(df["time"].iloc[-1])],
+            type="date",
+        ),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         legend_grouptitlefont_color="rgba(0,0,0,0)",
         plot_bgcolor="#0e1117",
@@ -784,7 +787,7 @@ def build_chart3(df):
         title=None,
         height=650,
         margin=dict(t=50, b=10),
-        xaxis_rangeslider_visible=False,
+        xaxis=dict(rangeslider_visible=False, type="date"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         legend_grouptitlefont_color="rgba(0,0,0,0)",
         plot_bgcolor="#0e1117",
@@ -1359,7 +1362,7 @@ is_swing_suitable = ticker in SWING_TRADE_SUITABLE
 # ── HEADER ─────────────────────────────────────────────────────
 
 st.markdown("#### ASX Stock Technical Dashboard")
-APP_VERSION = "v1.0.44"
+APP_VERSION = "v1.0.45"
 st.caption(f"{APP_VERSION} | Swing trade focused analysis | {timeframe} | {date_start.strftime('%d %b %Y')} to {date_end.strftime('%d %b %Y')}")
 st.divider()
 
