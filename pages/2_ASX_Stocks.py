@@ -1247,7 +1247,7 @@ is_swing_suitable = ticker in SWING_TRADE_SUITABLE
 # ── HEADER ─────────────────────────────────────────────────────
 
 st.markdown("#### ASX Stock Technical Dashboard")
-APP_VERSION = "v1.0.47"
+APP_VERSION = "v1.0.48"
 st.caption(f"{APP_VERSION} | Swing trade focused analysis | {timeframe} | {date_start.strftime('%d %b %Y')} to {date_end.strftime('%d %b %Y')}")
 st.divider()
 
@@ -1304,7 +1304,10 @@ st.markdown(
         </ul>
       </div>
       <p style='font-size:0.72rem; color:#4b5563; margin:10px 0 0 0'>
-        ⚠️ Not financial advice. Scroll to Swing Trade Indicators section below for full charts.
+        ⚠️ Not financial advice. &nbsp;
+        <a href='#swing-indicators' style='color:#60a5fa; text-decoration:none;'>
+          ↓ View full Swing Trade Indicator charts
+        </a>
       </p>
     </div>
     """,
@@ -1849,6 +1852,7 @@ def detect_divergence(price_series, indicator_series, window=5, lookback=60):
 
 # ── 1. RSI / MACD DIVERGENCE ───────────────────────────────────
 
+st.markdown("<a id='swing-indicators'></a>", unsafe_allow_html=True)
 st.markdown("### 1. RSI & MACD Divergence")
 
 if df["RSI"].notna().any() and df["MACD"].notna().any():
