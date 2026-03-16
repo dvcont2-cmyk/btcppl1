@@ -499,33 +499,8 @@ def build_chart2(df):
     add_bg_zones(fig, df, all_bull, "#22c55e")
     add_bg_zones(fig, df, all_bear, "#ef4444")
 
-    # Bull count tinting: one thin vrect per bar coloured by how many STs are bullish.
-    # Using vrects (not multiple Candlestick traces) keeps a single continuous time axis
-    # so ST line Scatter traces align correctly across the full date range.
-    df["_bull_count"] = df.apply(
-        lambda r: sum(1 for d in [r["dir1"], r["dir2"], r["dir3"]] if d == 1), axis=1)
-    TINT = {3: "rgba(34,197,94,0.25)",  2: "rgba(134,239,172,0.20)",
-            1: "rgba(252,165,165,0.20)", 0: "rgba(239,68,68,0.25)"}
-
-    times = df["time"].values
-    for i in range(len(df)):
-        color = TINT[df["_bull_count"].iloc[i]]
-        x0 = times[i]
-        x1 = times[i+1] if i + 1 < len(times) else x0
-        fig.add_vrect(x0=x0, x1=x1, fillcolor=color,
-                      opacity=1.0, layer="below", line_width=0)
-
-    # Legend entries for the tint levels (invisible scatter traces just for the legend)
-    TINT_LABELS = {3: ("3/3 Bull", "#22c55e"), 2: ("2/3 Bull", "#86efac"),
-                   1: ("1/3 Bull", "#fca5a5"), 0: ("0/3 Bull", "#ef4444")}
-    for cnt, (lbl, color) in TINT_LABELS.items():
-        if (df["_bull_count"] == cnt).any():
-            fig.add_trace(go.Scatter(
-                x=[None], y=[None], mode="markers",
-                marker=dict(size=10, color=color, symbol="square"),
-                name=lbl, showlegend=True))
-
-    # Single Candlestick — continuous time axis, no "undefined" from multiple traces
+    # Single Candlestick — standard colours, continuous time axis
+    # Candle tinting removed: the background zone shading already shows bull/bear context
     fig.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
         low=df["low"], close=df["close"],
@@ -1384,7 +1359,7 @@ is_swing_suitable = ticker in SWING_TRADE_SUITABLE
 # ── HEADER ─────────────────────────────────────────────────────
 
 st.markdown("#### ASX Stock Technical Dashboard")
-APP_VERSION = "v1.0.43"
+APP_VERSION = "v1.0.44"
 st.caption(f"{APP_VERSION} | Swing trade focused analysis | {timeframe} | {date_start.strftime('%d %b %Y')} to {date_end.strftime('%d %b %Y')}")
 st.divider()
 
