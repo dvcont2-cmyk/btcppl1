@@ -582,6 +582,10 @@ def build_chart2(df):
 # SELL: all 3 STs bearish AND RSI(7) < 50 — first bar of full alignment only
 # EXIT: any single ST flips direction OR price touches Fibonacci BB band (200, 2.618)
 
+# ── CHART 3: Long-only. BUY when all 3 STs bull + RSI(7)>50.
+# EXIT when in a long and: any ST flips red OR price touches UPPER Fib BB.
+# No sell signals — short trades not used.
+
 def compute_fib_bb(close_series, length=200, mult=2.618):
     basis = close_series.rolling(length).mean()
     dev   = close_series.rolling(length).std(ddof=0)
@@ -591,7 +595,6 @@ def compute_fib_bb(close_series, length=200, mult=2.618):
 def compute_chart3_signals(df):
     df = df.copy()
 
-    # All three ST calls are already safe (compute_supertrend returns NaN on failure)
     df["c3_st1"], df["c3_dir1"] = compute_supertrend(df, period=10, multiplier=1.0)
     df["c3_st2"], df["c3_dir2"] = compute_supertrend(df, period=11, multiplier=2.0)
     df["c3_st3"], df["c3_dir3"] = compute_supertrend(df, period=12, multiplier=3.0)
@@ -607,32 +610,43 @@ def compute_chart3_signals(df):
         df["c3_fib_basis"] = df["c3_fib_upper"] = df["c3_fib_lower"] = np.nan
 
     df["c3_buy"]  = None
-    df["c3_sell"] = None
     df["c3_exit"] = None
+
+    in_long       = False   # are we currently holding a long position?
     prev_all_bull = False
-    prev_all_bear = False
+
     for i in range(1, len(df)):
-        d1   = df["c3_dir1"].iloc[i];   pd1 = df["c3_dir1"].iloc[i-1]
-        d2   = df["c3_dir2"].iloc[i];   pd2 = df["c3_dir2"].iloc[i-1]
-        d3   = df["c3_dir3"].iloc[i];   pd3 = df["c3_dir3"].iloc[i-1]
+        d1  = df["c3_dir1"].iloc[i];  pd1 = df["c3_dir1"].iloc[i-1]
+        d2  = df["c3_dir2"].iloc[i];  pd2 = df["c3_dir2"].iloc[i-1]
+        d3  = df["c3_dir3"].iloc[i];  pd3 = df["c3_dir3"].iloc[i-1]
         rsi7 = df["c3_rsi7"].iloc[i]
         cls  = df["close"].iloc[i]
         fub  = df["c3_fib_upper"].iloc[i]
-        flb  = df["c3_fib_lower"].iloc[i]
-        all_bull = (d1 == 1  and d2 == 1  and d3 == 1)
-        all_bear = (d1 == -1 and d2 == -1 and d3 == -1)
-        # Entry signals (first bar of full alignment with RSI confirmation)
-        if all_bull and not prev_all_bull and pd.notna(rsi7) and rsi7 > 50:
-            df.at[df.index[i], "c3_buy"] = cls
-        if all_bear and not prev_all_bear and pd.notna(rsi7) and rsi7 < 50:
-            df.at[df.index[i], "c3_sell"] = cls
-        # Exit: any ST flipped OR Fib BB touched
-        st_flip   = (d1 != pd1) or (d2 != pd2) or (d3 != pd3)
-        fib_touch = pd.notna(fub) and pd.notna(flb) and (cls >= fub or cls <= flb)
-        if st_flip or fib_touch:
-            df.at[df.index[i], "c3_exit"] = cls
+
+        all_bull = (d1 == 1 and d2 == 1 and d3 == 1)
+
+        if in_long:
+            # Exit if any ST turned red
+            any_st_flipped_red = (
+                (d1 == -1 and pd1 == 1) or
+                (d2 == -1 and pd2 == 1) or
+                (d3 == -1 and pd3 == 1)
+            )
+            # Exit if price touched or exceeded the UPPER Fib BB (profit target / overextended)
+            upper_fib_touch = pd.notna(fub) and cls >= fub
+
+            if any_st_flipped_red or upper_fib_touch:
+                df.at[df.index[i], "c3_exit"] = cls
+                in_long = False
+
+        else:
+            # Enter long on first bar where all 3 STs are bull + RSI(7) > 50
+            if all_bull and not prev_all_bull and pd.notna(rsi7) and rsi7 > 50:
+                df.at[df.index[i], "c3_buy"] = cls
+                in_long = True
+
         prev_all_bull = all_bull
-        prev_all_bear = all_bear
+
     return df
 
 
@@ -697,9 +711,8 @@ def build_chart3(df):
     # RSI(7) overlay as a secondary axis annotation at signal points
     # (full RSI panel is already in the RSI chart below; here just reference value in hover)
 
-    # Buy / Sell / Exit arrows
+    # Buy / Exit markers only — no sell (long-only strategy)
     buy_df  = df[df["c3_buy"].notna()]
-    sell_df = df[df["c3_sell"].notna()]
     exit_df = df[df["c3_exit"].notna()]
 
     if not buy_df.empty:
@@ -712,21 +725,11 @@ def build_chart3(df):
                         line=dict(color="white", width=1.5)),
             textposition="bottom center"))
 
-    if not sell_df.empty:
-        fig.add_trace(go.Scatter(
-            x=sell_df["time"], y=sell_df["high"].astype(float) * 1.010,
-            mode="markers+text", name="SELL (all 3 bear + RSI<50)",
-            text=["▼"] * len(sell_df),
-            textfont=dict(size=20, color="#EE7733"),
-            marker=dict(symbol="triangle-down", size=16, color="#EE7733",
-                        line=dict(color="white", width=1.5)),
-            textposition="top center"))
-
     if not exit_df.empty:
         fig.add_trace(go.Scatter(
             x=exit_df["time"], y=exit_df["high"].astype(float) * 1.015,
-            mode="markers", name="EXIT (ST flip or Fib BB touch)",
-            marker=dict(symbol="diamond", size=10, color="#fbbf24",
+            mode="markers", name="EXIT long (ST turned red or upper Fib BB hit)",
+            marker=dict(symbol="diamond", size=12, color="#fbbf24",
                         line=dict(color="white", width=1.5))))
 
     fig.update_layout(
@@ -738,25 +741,6 @@ def build_chart3(df):
         plot_bgcolor="#0e1117",
         paper_bgcolor="rgba(0,0,0,0)")
     return fig
-
-
-
-    closes = df["close"].values
-    highs_pts, lows_pts = [], []
-    for i in range(window, len(closes) - window):
-        if closes[i] == max(closes[max(0, i-window):i+window+1]):
-            highs_pts.append(closes[i])
-        if closes[i] == min(closes[max(0, i-window):i+window+1]):
-            lows_pts.append(closes[i])
-    if len(highs_pts) >= 2 and len(lows_pts) >= 2:
-        hh = highs_pts[-1] > highs_pts[-2]
-        hl = lows_pts[-1]  > lows_pts[-2]
-        lh = highs_pts[-1] < highs_pts[-2]
-        ll = lows_pts[-1]  < lows_pts[-2]
-        if hh and hl:   return "🟢 Uptrend - Higher Highs & Higher Lows", "green"
-        elif lh and ll: return "🔴 Downtrend - Lower Highs & Lower Lows", "red"
-        else:           return "⚪ Choppy - No clear structure", "gray"
-    return "⚪ Not enough swing points yet", "gray"
 
 
 def detect_trend_structure(df, window=3):
@@ -1215,7 +1199,7 @@ st.divider()
 
 # ── CHART 3 ────────────────────────────────────────────────────
 
-st.markdown("### Chart 3 — RSI + Fibonacci BB (confluence signals)")
+st.markdown("### Chart 3 — RSI + Fibonacci BB (long-only signals)")
 
 # Chart 3 current status
 c3_bulls = sum(1 for d in [latest.get("c3_dir1", 0), latest.get("c3_dir2", 0), latest.get("c3_dir3", 0)] if d == 1)
@@ -1235,24 +1219,21 @@ st.markdown(
     unsafe_allow_html=True)
 
 if c3_bulls == 3 and pd.notna(c3_rsi7) and c3_rsi7 > 50:
-    status_line("All 3 STs bullish + RSI(7) > 50 — full BUY confluence active.", "strong_bullish")
+    status_line("All 3 STs bullish + RSI(7) > 50 — BUY conditions met. Watch for first alignment bar.", "strong_bullish")
 elif c3_bulls == 3:
-    status_line("All 3 STs bullish but RSI(7) ≤ 50 — alignment without momentum, wait for RSI confirmation.", "caution")
-elif c3_bears == 3 and pd.notna(c3_rsi7) and c3_rsi7 < 50:
-    status_line("All 3 STs bearish + RSI(7) < 50 — full SELL confluence active.", "strong_bearish")
+    status_line("All 3 STs bullish but RSI(7) ≤ 50 — alignment without momentum confirmation, not a valid entry yet.", "caution")
 elif c3_bears == 3:
-    status_line("All 3 STs bearish but RSI(7) ≥ 50 — alignment without momentum, wait for RSI confirmation.", "caution")
+    status_line("All 3 STs bearish — downtrend. No long entry. Hold cash and wait for STs to turn green.", "bearish")
 else:
-    status_line("STs conflicted — no entry signal. Watch for all-3 alignment + RSI confirmation.", "neutral")
+    status_line("STs conflicted — no entry signal. Wait for all 3 STs to align green + RSI(7) > 50.", "neutral")
 
 fig3 = build_chart3(df)
 st.plotly_chart(fig3, use_container_width=True)
 st.caption(
-    "ST params: (10,1.0), (11,2.0), (12,3.0). "
-    "Blue ▲ BUY: all 3 STs bullish + RSI(7) > 50, first alignment bar only. "
-    "Orange ▼ SELL: all 3 STs bearish + RSI(7) < 50, first alignment bar only. "
-    "Yellow ◆ EXIT: any ST flips direction OR price touches Fibonacci BB (SMA 200 ± 2.618σ). "
-    "Based on TradingView script by TRW_meir.")
+    "Long-only strategy. ST params: (10,1.0), (11,2.0), (12,3.0). "
+    "Blue ▲ BUY: all 3 STs turn green + RSI(7) > 50, on the first bar of alignment. "
+    "Yellow ◆ EXIT: close long when any ST turns red OR price touches upper Fib BB (SMA 200 + 2.618σ). "
+    "Exits only shown while a long position is active.")
 
 st.divider()
 
