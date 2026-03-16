@@ -186,37 +186,115 @@ def get_stock_info(ticker):
 
 
 def compute_indicators(df):
-    df = df.copy()
-    df["RSI"]         = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
-    stoch             = ta.momentum.StochRSIIndicator(df["close"], window=14)
-    df["StochRSI_k"]  = stoch.stochrsi_k() * 100
-    df["StochRSI_d"]  = stoch.stochrsi_d() * 100
-    macd              = ta.trend.MACD(df["close"])
-    df["MACD"]        = macd.macd()
-    df["MACD_signal"] = macd.macd_signal()
-    df["MACD_hist"]   = macd.macd_diff()
-    bb                = ta.volatility.BollingerBands(df["close"], window=20)
-    df["BB_upper"]    = bb.bollinger_hband()
-    df["BB_lower"]    = bb.bollinger_lband()
-    df["BB_mid"]      = bb.bollinger_mavg()
-    df["BB_pct"]      = bb.bollinger_pband()
-    df["EMA_50"]      = ta.trend.EMAIndicator(df["close"], window=50).ema_indicator()
-    df["EMA_200"]     = ta.trend.EMAIndicator(df["close"], window=200).ema_indicator()
-    adx               = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14)
-    df["ADX"]         = adx.adx()
-    df["ADX_pos"]     = adx.adx_pos()
-    df["ADX_neg"]     = adx.adx_neg()
-    df["CCI"]         = ta.trend.CCIIndicator(df["high"], df["low"], df["close"], window=20).cci()
-    df["WilliamsR"]   = ta.momentum.WilliamsRIndicator(df["high"], df["low"], df["close"], lbp=14).williams_r()
-    df["ROC"]         = ta.momentum.ROCIndicator(df["close"], window=12).roc()
-    df["ATR"]         = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range()
-    kc_mid            = df["close"].rolling(20).mean()
-    atr20             = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=20).average_true_range()
-    kc_upper          = kc_mid + 1.5 * atr20
-    kc_lower          = kc_mid - 1.5 * atr20
-    df["squeeze"]     = (bb.bollinger_hband() < kc_upper) & (bb.bollinger_lband() > kc_lower)
-    delta             = df["close"] - ((df["high"].rolling(20).max() + df["low"].rolling(20).min()) / 2 + df["close"].rolling(20).mean()) / 2
-    df["squeeze_hist"] = delta.rolling(20).mean()
+    df   = df.copy()
+    n    = len(df)
+
+    def safe(fn, cols):
+        """Run fn(); on any error fill listed cols with NaN."""
+        try:
+            fn()
+        except Exception:
+            for c in cols:
+                df[c] = np.nan
+
+    # RSI
+    safe(lambda: df.__setitem__("RSI",
+            ta.momentum.RSIIndicator(df["close"], window=14).rsi()),
+         ["RSI"])
+
+    # Stoch RSI — needs 3× window bars (14*3=42); safe() handles short data
+    def _stochrsi():
+        s = ta.momentum.StochRSIIndicator(df["close"], window=14)
+        df["StochRSI_k"] = s.stochrsi_k() * 100
+        df["StochRSI_d"] = s.stochrsi_d() * 100
+    safe(_stochrsi, ["StochRSI_k", "StochRSI_d"])
+
+    # MACD — needs 26+ bars
+    def _macd():
+        m = ta.trend.MACD(df["close"])
+        df["MACD"]        = m.macd()
+        df["MACD_signal"] = m.macd_signal()
+        df["MACD_hist"]   = m.macd_diff()
+    safe(_macd, ["MACD", "MACD_signal", "MACD_hist"])
+
+    # Bollinger Bands
+    def _bb():
+        b = ta.volatility.BollingerBands(df["close"], window=20)
+        df["BB_upper"] = b.bollinger_hband()
+        df["BB_lower"] = b.bollinger_lband()
+        df["BB_mid"]   = b.bollinger_mavg()
+        df["BB_pct"]   = b.bollinger_pband()
+        return b
+    try:
+        _bb_obj = ta.volatility.BollingerBands(df["close"], window=20)
+        df["BB_upper"] = _bb_obj.bollinger_hband()
+        df["BB_lower"] = _bb_obj.bollinger_lband()
+        df["BB_mid"]   = _bb_obj.bollinger_mavg()
+        df["BB_pct"]   = _bb_obj.bollinger_pband()
+    except Exception:
+        for c in ["BB_upper", "BB_lower", "BB_mid", "BB_pct"]:
+            df[c] = np.nan
+        _bb_obj = None
+
+    # EMAs
+    safe(lambda: df.__setitem__("EMA_50",
+            ta.trend.EMAIndicator(df["close"], window=50).ema_indicator()),
+         ["EMA_50"])
+    safe(lambda: df.__setitem__("EMA_200",
+            ta.trend.EMAIndicator(df["close"], window=200).ema_indicator()),
+         ["EMA_200"])
+
+    # ADX — needs 2×window+1 bars minimum; window=14 → 29 bars
+    def _adx():
+        a = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14)
+        df["ADX"]     = a.adx()
+        df["ADX_pos"] = a.adx_pos()
+        df["ADX_neg"] = a.adx_neg()
+    safe(_adx, ["ADX", "ADX_pos", "ADX_neg"])
+
+    # CCI
+    safe(lambda: df.__setitem__("CCI",
+            ta.trend.CCIIndicator(df["high"], df["low"], df["close"], window=20).cci()),
+         ["CCI"])
+
+    # Williams %R
+    safe(lambda: df.__setitem__("WilliamsR",
+            ta.momentum.WilliamsRIndicator(df["high"], df["low"], df["close"], lbp=14).williams_r()),
+         ["WilliamsR"])
+
+    # ROC
+    safe(lambda: df.__setitem__("ROC",
+            ta.momentum.ROCIndicator(df["close"], window=12).roc()),
+         ["ROC"])
+
+    # ATR
+    safe(lambda: df.__setitem__("ATR",
+            ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range()),
+         ["ATR"])
+
+    # TTM Squeeze
+    def _squeeze():
+        kc_mid  = df["close"].rolling(20).mean()
+        atr20   = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=20).average_true_range()
+        kc_upper = kc_mid + 1.5 * atr20
+        kc_lower = kc_mid - 1.5 * atr20
+        if _bb_obj is not None:
+            df["squeeze"] = (_bb_obj.bollinger_hband() < kc_upper) & (_bb_obj.bollinger_lband() > kc_lower)
+        else:
+            df["squeeze"] = False
+        delta = df["close"] - ((df["high"].rolling(20).max() + df["low"].rolling(20).min()) / 2
+                                + df["close"].rolling(20).mean()) / 2
+        df["squeeze_hist"] = delta.rolling(20).mean()
+    safe(_squeeze, ["squeeze", "squeeze_hist"])
+
+    # Ensure all expected columns exist even if entirely NaN
+    for col in ["RSI", "StochRSI_k", "StochRSI_d", "MACD", "MACD_signal", "MACD_hist",
+                "BB_upper", "BB_lower", "BB_mid", "BB_pct", "EMA_50", "EMA_200",
+                "ADX", "ADX_pos", "ADX_neg", "CCI", "WilliamsR", "ROC", "ATR",
+                "squeeze", "squeeze_hist"]:
+        if col not in df.columns:
+            df[col] = np.nan
+
     return df
 
 
@@ -921,11 +999,21 @@ if df.empty or len(df) < min_bars:
     st.stop()
 
 df = compute_indicators(df)
-df = df.dropna(subset=["RSI"]).reset_index(drop=True)
+df = df.dropna(subset=["close"]).reset_index(drop=True)
 
 if df.empty:
     st.error(f"Not enough bars after indicator calculation for {ticker}. Try a wider date range.")
     st.stop()
+
+# Warn if key indicators couldn't be computed (NaN across all rows)
+missing = [c for c in ["RSI", "ADX", "MACD", "EMA_50"]
+           if c in df.columns and df[c].isna().all()]
+if missing:
+    st.info(
+        f"⚠️ Some indicators unavailable with the current range/timeframe "
+        f"({', '.join(missing)} require more bars). Those sections will show N/A. "
+        f"Try a wider date range for full coverage."
+    )
 
 df     = triple_supertrend_signals(df)
 df     = compute_chart3_signals(df)
