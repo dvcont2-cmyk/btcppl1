@@ -72,9 +72,13 @@ if range_option == "Custom":
     col_s, col_e = st.sidebar.columns(2)
     date_start = col_s.date_input("From", value=date.today() - timedelta(days=365))
     date_end   = col_e.date_input("To",   value=date.today())
+    # yfinance end is exclusive — add 1 day so the selected date is included
+    fetch_end = date_end + timedelta(days=1)
 else:
     date_end   = date.today()
     date_start = date_end - timedelta(days=range_map[range_option])
+    # yfinance end is exclusive — use tomorrow so today's bars are included
+    fetch_end  = date_end + timedelta(days=1)
 
 # ── Timeframe → yfinance interval mapping ──────────────────────
 INTERVAL_MAP = {
@@ -107,12 +111,14 @@ if timeframe == "Hourly" and range_days > 60:
     st.sidebar.warning("⚠️ Hourly data is limited to 60 days by Yahoo Finance. Range clamped to 60 days.")
     date_start = date_end - timedelta(days=60)
     range_days = 60
+    fetch_end  = date_end + timedelta(days=1)
 
 # Monthly needs at least 6 months of data to be useful
 if timeframe == "Monthly" and range_days < 180:
     st.sidebar.warning("⚠️ Monthly timeframe needs at least 6 months of range. Extending to 2 years.")
     date_start = date_end - timedelta(days=730)
     range_days = 730
+    fetch_end  = date_end + timedelta(days=1)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Chart 3 — ATR Trail Stop**")
@@ -1031,7 +1037,7 @@ interval = INTERVAL_MAP[timeframe]
 min_bars = MIN_BARS[timeframe]
 
 with st.spinner(f"Loading {ticker} data ({timeframe})..."):
-    df   = get_stock_data(ticker, date_start, date_end, interval)
+    df   = get_stock_data(ticker, date_start, fetch_end, interval)
     info = get_stock_info(ticker)
 
 if df.empty or len(df) < min_bars:
