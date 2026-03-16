@@ -795,6 +795,257 @@ def build_chart3(df):
     return fig
 
 
+def compute_swing_summary(df, price, is_swing_suitable):
+    """
+    Runs all 5 swing indicator analyses and returns a structured dict
+    used both for the top summary card and reused in each chart section.
+    """
+    result = {}
+
+    # ── Divergence ────────────────────────────────────────────
+    result["div_rsi_bull"] = result["div_rsi_bear"]   = False
+    result["div_macd_bull"] = result["div_macd_bear"] = False
+    result["rsi_divs"] = []
+    result["macd_divs"] = []
+    if df["RSI"].notna().any() and df["MACD"].notna().any():
+        try:
+            rdi = detect_divergence(df["close"], df["RSI"],  window=3, lookback=60)
+            mdi = detect_divergence(df["close"], df["MACD"], window=3, lookback=60)
+            result["rsi_divs"]      = rdi
+            result["macd_divs"]     = mdi
+            result["div_rsi_bull"]  = any(t == "bullish" for _, t in rdi[-3:]) if rdi else False
+            result["div_rsi_bear"]  = any(t == "bearish" for _, t in rdi[-3:]) if rdi else False
+            result["div_macd_bull"] = any(t == "bullish" for _, t in mdi[-3:]) if mdi else False
+            result["div_macd_bear"] = any(t == "bearish" for _, t in mdi[-3:]) if mdi else False
+        except Exception:
+            pass
+
+    # ── Ichimoku ──────────────────────────────────────────────
+    result["ichi_signal"] = "insufficient"
+    result["ichi_tenkan"] = result["ichi_kijun"] = np.nan
+    result["ichi_cloud_top"] = result["ichi_cloud_bottom"] = np.nan
+    if len(df) >= 52:
+        try:
+            tenkan, kijun, ssa, ssb, _ = compute_ichimoku(df)
+            lt = tenkan.iloc[-1]; lk = kijun.iloc[-1]
+            la = ssa.iloc[-1];   lb = ssb.iloc[-1]
+            result["ichi_tenkan"] = lt;  result["ichi_kijun"] = lk
+            if pd.notna(la) and pd.notna(lb):
+                result["ichi_cloud_top"]    = max(la, lb)
+                result["ichi_cloud_bottom"] = min(la, lb)
+            ct = result["ichi_cloud_top"]; cb = result["ichi_cloud_bottom"]
+            if pd.notna(ct) and pd.notna(lt) and pd.notna(lk):
+                if price > ct and lt > lk:
+                    result["ichi_signal"] = "strong_bull"
+                elif price > ct:
+                    result["ichi_signal"] = "bull"
+                elif price < cb and lt < lk:
+                    result["ichi_signal"] = "strong_bear"
+                elif price < cb:
+                    result["ichi_signal"] = "bear"
+                else:
+                    result["ichi_signal"] = "inside_cloud"
+        except Exception:
+            pass
+
+    # ── OBV ───────────────────────────────────────────────────
+    result["obv_signal"] = "neutral"
+    if "volume" in df.columns and df["volume"].notna().any() and len(df) >= 20:
+        try:
+            obv = [0]
+            for i in range(1, len(df)):
+                if df["close"].iloc[i] > df["close"].iloc[i-1]:
+                    obv.append(obv[-1] + df["volume"].iloc[i])
+                elif df["close"].iloc[i] < df["close"].iloc[i-1]:
+                    obv.append(obv[-1] - df["volume"].iloc[i])
+                else:
+                    obv.append(obv[-1])
+            obv_s = pd.Series(obv, index=df.index)
+            pt = float(df["close"].iloc[-1]) - float(df["close"].iloc[-20])
+            ot = float(obv_s.iloc[-1])       - float(obv_s.iloc[-20])
+            result["obv_price_trend"] = pt
+            result["obv_trend"]       = ot
+            if pt > 0 and ot > 0:   result["obv_signal"] = "confirming_bull"
+            elif pt > 0 and ot < 0: result["obv_signal"] = "bearish_div"
+            elif pt < 0 and ot > 0: result["obv_signal"] = "bullish_div"
+            elif pt < 0 and ot < 0: result["obv_signal"] = "confirming_bear"
+        except Exception:
+            pass
+
+    # ── Fibonacci ─────────────────────────────────────────────
+    result["fib_signal"] = "neutral"
+    result["fib_zone"]   = None
+    try:
+        fib_df     = df.tail(60)
+        sh = float(fib_df["high"].max()); sl = float(fib_df["low"].min())
+        fr = sh - sl
+        levels = {"23.6%": 0.236, "38.2%": 0.382, "50%": 0.500,
+                  "61.8%": 0.618, "78.6%": 0.786}
+        fib_p  = {lbl: sh - r * fr for lbl, r in levels.items()}
+        sorted_l = sorted(fib_p.items(), key=lambda x: x[1], reverse=True)
+        for i in range(len(sorted_l) - 1):
+            ul, uv = sorted_l[i]; ll, lv = sorted_l[i+1]
+            if lv <= price <= uv:
+                result["fib_zone"] = (ll, lv, ul, uv)
+                pct = (price - lv) / (uv - lv) * 100 if uv != lv else 50
+                if any(k in ll for k in ["38.2", "50%", "61.8"]) and pct < 25:
+                    result["fib_signal"] = "at_support"
+                elif pct > 75:
+                    result["fib_signal"] = "near_resistance"
+                else:
+                    result["fib_signal"] = "mid_zone"
+                break
+    except Exception:
+        pass
+
+    # ── Parabolic SAR ─────────────────────────────────────────
+    result["psar_signal"]    = "insufficient"
+    result["psar_bull"]      = None
+    result["psar_val"]       = np.nan
+    result["psar_just_flip"] = None
+    if len(df) >= 10:
+        try:
+            pv, pb = compute_psar(df)
+            cur_bull  = bool(pb.iloc[-1])
+            prev_bull = bool(pb.iloc[-2]) if len(pb) > 1 else cur_bull
+            result["psar_bull"]  = cur_bull
+            result["psar_val"]   = float(pv.iloc[-1])
+            if cur_bull and not prev_bull:
+                result["psar_signal"]    = "just_flipped_bull"
+                result["psar_just_flip"] = "bull"
+            elif not cur_bull and prev_bull:
+                result["psar_signal"]    = "just_flipped_bear"
+                result["psar_just_flip"] = "bear"
+            elif cur_bull:
+                result["psar_signal"] = "bull"
+            else:
+                result["psar_signal"] = "bear"
+        except Exception:
+            pass
+
+    # ── Overall recommendation ─────────────────────────────────
+    bull_pts = 0; bear_pts = 0; notes = []
+
+    # Divergence
+    if result["div_rsi_bull"] or result["div_macd_bull"]:
+        bull_pts += 2
+        notes.append("Bullish momentum divergence on " +
+                      ("RSI & MACD" if result["div_rsi_bull"] and result["div_macd_bull"]
+                       else "RSI" if result["div_rsi_bull"] else "MACD"))
+    elif result["div_rsi_bear"] or result["div_macd_bear"]:
+        bear_pts += 2
+        notes.append("Bearish momentum divergence — momentum weakening into price highs")
+
+    # Ichimoku
+    sig = result["ichi_signal"]
+    if sig == "strong_bull":
+        bull_pts += 3; notes.append("Ichimoku: price above cloud, Tenkan > Kijun — strong bullish structure")
+    elif sig == "bull":
+        bull_pts += 1; notes.append("Ichimoku: price above cloud but momentum softening")
+    elif sig == "strong_bear":
+        bear_pts += 3; notes.append("Ichimoku: price below cloud, Tenkan < Kijun — strong bearish structure")
+    elif sig == "bear":
+        bear_pts += 1; notes.append("Ichimoku: price below cloud — avoid new longs")
+    elif sig == "inside_cloud":
+        notes.append("Ichimoku: price inside cloud — indecision, wait for breakout")
+
+    # OBV
+    obv = result["obv_signal"]
+    if obv == "confirming_bull":
+        bull_pts += 2; notes.append("OBV confirming uptrend — volume flowing in with price")
+    elif obv == "bullish_div":
+        bull_pts += 2; notes.append("OBV bullish divergence — accumulation on price weakness")
+    elif obv == "bearish_div":
+        bear_pts += 2; notes.append("OBV bearish divergence — distribution into price strength")
+    elif obv == "confirming_bear":
+        bear_pts += 1; notes.append("OBV confirming downtrend — volume flowing out with price")
+
+    # Fibonacci
+    fib = result["fib_signal"]
+    if fib == "at_support":
+        ll, lv, ul, uv = result["fib_zone"]
+        bull_pts += 2; notes.append(f"Price sitting on {ll} Fibonacci support (${lv:.4f}) — key entry zone")
+    elif fib == "near_resistance":
+        _, _, ul, uv = result["fib_zone"]
+        bear_pts += 1; notes.append(f"Price approaching {ul} Fibonacci resistance (${uv:.4f}) — watch for rejection")
+
+    # SAR
+    psar = result["psar_signal"]
+    if psar == "just_flipped_bull":
+        bull_pts += 3; notes.append("Parabolic SAR just flipped bullish — fresh trend reversal signal")
+    elif psar == "just_flipped_bear":
+        bear_pts += 3; notes.append("Parabolic SAR just flipped bearish — trend reversed, exit signal")
+    elif psar == "bull":
+        bull_pts += 1; notes.append(f"Parabolic SAR bullish — trailing stop at ${result['psar_val']:.4f}")
+    elif psar == "bear":
+        bear_pts += 1; notes.append("Parabolic SAR bearish — avoid new longs")
+
+    total = bull_pts + bear_pts
+    bull_pct = bull_pts / total * 100 if total > 0 else 50
+
+    if bull_pts >= 8:
+        action = "STRONG BUY"
+        action_color = "#22c55e"
+        action_detail = (
+            "Multiple high-conviction bullish signals aligning. "
+            + ("For swing traders: consider entering now with a stop below the SAR or 1.5× ATR. "
+               if is_swing_suitable else
+               "For DCA holders: this is a strong accumulation zone — consider adding to position. "))
+    elif bull_pts >= 5:
+        action = "WATCH / ACCUMULATE"
+        action_color = "#86efac"
+        action_detail = (
+            "Bullish bias building but not full confluence. "
+            + ("For swing traders: watch for one more confirming signal (e.g. SAR flip or Fib support bounce) before entry. "
+               if is_swing_suitable else
+               "For DCA holders: reasonable entry zone, consider partial accumulation. "))
+    elif bull_pts >= 3 and bear_pts <= 2:
+        action = "HOLD / NEUTRAL"
+        action_color = "#9ca3af"
+        action_detail = (
+            "Mixed signals — no clear directional edge. "
+            "Hold existing positions. Avoid new entries until signals clarify. "
+            "Watch for Ichimoku cloud breakout or SAR flip for next directional cue.")
+    elif bear_pts >= 5:
+        action = "CAUTION — REDUCE / WAIT"
+        action_color = "#f97316"
+        action_detail = (
+            "Multiple bearish signals present. "
+            + ("For swing traders: avoid new longs. Consider tightening stops on existing positions. "
+               if is_swing_suitable else
+               "For DCA holders: pause regular buys until trend stabilises. Consider waiting for RSI < 35 before next purchase. "))
+    elif bear_pts >= 3:
+        action = "CAUTION"
+        action_color = "#fbbf24"
+        action_detail = (
+            "More bearish signals than bullish. "
+            "Avoid new entries. Hold cash and wait for OBV or Ichimoku to turn positive.")
+    else:
+        action = "NEUTRAL — WAIT"
+        action_color = "#9ca3af"
+        action_detail = "Insufficient data or signals too mixed for a clear recommendation. Widen the date range for better indicator coverage."
+
+    # Profit-taking check
+    take_profit_note = ""
+    if result["fib_signal"] == "near_resistance":
+        _, _, ul, uv = result["fib_zone"]
+        take_profit_note = f"⚠️ Price near {ul} Fibonacci resistance — if you're in a position, consider taking partial profits."
+    if result["ichi_signal"] in ("strong_bull",) and psar == "just_flipped_bear":
+        take_profit_note = "⚠️ SAR just flipped bearish despite bullish Ichimoku — trend may be topping. Consider scaling out."
+    if obv == "bearish_div" and bull_pts > 3:
+        take_profit_note = "⚠️ OBV bearish divergence while price is elevated — distribution signal. Consider taking profits."
+
+    result["action"]           = action
+    result["action_color"]     = action_color
+    result["action_detail"]    = action_detail
+    result["take_profit_note"] = take_profit_note
+    result["bull_pts"]         = bull_pts
+    result["bear_pts"]         = bear_pts
+    result["notes"]            = notes
+
+    return result
+
+
 def detect_trend_structure(df, window=3):
     closes = df["close"].values
     highs_pts, lows_pts = [], []
@@ -1086,6 +1337,7 @@ label         = signal_label(score)
 ts            = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 swing_signals = swing_trade_commentary(latest, df, ticker, price, score, info)
 trend_label, trend_color = detect_trend_structure(df, window=3)
+swing_summary  = compute_swing_summary(df, price, is_swing_suitable=(ticker in SWING_TRADE_SUITABLE))
 
 rsi_val    = f"{latest['RSI']:.1f}"          if pd.notna(latest['RSI'])         else "N/A"
 stoch_val  = f"{latest['StochRSI_k']:.1f}"   if pd.notna(latest['StochRSI_k'])  else "N/A"
@@ -1126,6 +1378,51 @@ if is_swing_suitable:
     st.success("Swing Trade Suitable - sufficient liquidity and volatility for active swing trading.")
 else:
     st.info("ETF / Low-liquidity stock - better suited to DCA / long-term holding than active swing trading.")
+
+# ── SWING TRADE KEY INSIGHTS ───────────────────────────────────
+ss = swing_summary
+ac = ss["action_color"]
+bp = ss["bull_pts"]; brp = ss["bear_pts"]
+total_pts = bp + brp
+bull_bar_pct = int(bp / total_pts * 100) if total_pts > 0 else 50
+
+st.markdown(
+    f"""
+    <div style='border:1px solid {ac}; border-radius:8px; padding:16px 20px; margin:12px 0;
+                background:rgba(0,0,0,0.25)'>
+      <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:8px'>
+        <span style='font-size:1.1rem; font-weight:700; color:{ac}'>
+          📊 Swing Indicator Summary — {ss["action"]}
+        </span>
+        <span style='font-size:0.8rem; color:#9ca3af'>
+          Based on: Divergence · Ichimoku · OBV · Fibonacci · Parabolic SAR
+        </span>
+      </div>
+
+      <div style='background:#1f2937; border-radius:4px; height:8px; margin-bottom:10px; overflow:hidden'>
+        <div style='background:{ac}; height:100%; width:{bull_bar_pct}%; border-radius:4px'></div>
+      </div>
+      <div style='display:flex; justify-content:space-between; font-size:0.75rem; color:#6b7280; margin-bottom:12px'>
+        <span>🐻 Bear signals: {brp}</span>
+        <span>🐂 Bull signals: {bp}</span>
+      </div>
+
+      <p style='font-size:0.9rem; color:#d1d5db; margin:0 0 10px 0'>{ss["action_detail"]}</p>
+
+      {"<div style='border-left:3px solid #f97316; padding:6px 10px; margin-bottom:10px; background:rgba(249,115,22,0.08); border-radius:0 4px 4px 0'><span style='font-size:0.85rem; color:#f97316'>" + ss["take_profit_note"] + "</span></div>" if ss["take_profit_note"] else ""}
+
+      <div style='border-top:1px solid #374151; padding-top:10px; margin-top:4px'>
+        <span style='font-size:0.78rem; color:#9ca3af; font-weight:600; text-transform:uppercase; letter-spacing:0.05em'>Key signals</span>
+        <ul style='margin:6px 0 0 0; padding-left:18px'>
+          {"".join(f"<li style='font-size:0.82rem; color:#d1d5db; margin-bottom:3px'>{n}</li>" for n in ss["notes"]) if ss["notes"] else "<li style='font-size:0.82rem; color:#6b7280'>No strong signals detected — indicators may need more data</li>"}
+        </ul>
+      </div>
+      <p style='font-size:0.72rem; color:#4b5563; margin:10px 0 0 0'>
+        ⚠️ Not financial advice. Scroll to Swing Trade Indicators section below for full charts.
+      </p>
+    </div>
+    """,
+    unsafe_allow_html=True)
 
 note = STOCK_NOTES.get(ticker, "")
 if note:
@@ -1623,5 +1920,552 @@ with row5_r:
         st.caption("Green = up day; red = down day. Volume above average on breakouts = confirmation.")
     else:
         st.info("Volume data not available.")
+
+
+st.divider()
+
+# ══════════════════════════════════════════════════════════════════
+# SWING TRADE INDICATORS SECTION
+# 1. RSI / MACD Divergence
+# 2. Ichimoku Cloud
+# 3. On Balance Volume (OBV)
+# 4. Fibonacci Retracement
+# 5. Parabolic SAR
+# ══════════════════════════════════════════════════════════════════
+
+st.markdown("## 📐 Swing Trade Indicators")
+st.caption("Supplementary indicators specifically suited to swing trading entries and exits.")
+st.divider()
+
+# ── Helper: detect divergence ──────────────────────────────────
+
+def detect_divergence(price_series, indicator_series, window=5, lookback=60):
+    """
+    Scan the last `lookback` bars for:
+      - Bullish divergence: price makes lower low, indicator makes higher low
+      - Bearish divergence: price makes higher high, indicator makes lower high
+    Returns list of (index, type) tuples.
+    """
+    results = []
+    p = price_series.values
+    ind = indicator_series.values
+    n = len(p)
+    start = max(window, n - lookback)
+    for i in range(start + window, n - 1):
+        # local low check
+        if all(p[i] <= p[i-j] for j in range(1, window+1)) and \
+           all(p[i] <= p[i+j] for j in range(1, min(window+1, n-i))):
+            # find prior local low in lookback
+            for j in range(i - window, max(start, i - lookback), -1):
+                if all(p[j] <= p[j-k] for k in range(1, min(window+1, j+1))) and \
+                   all(p[j] <= p[j+k] for k in range(1, min(window+1, i-j))):
+                    if p[i] < p[j] and ind[i] > ind[j]:   # bullish div
+                        results.append((i, "bullish"))
+                    break
+        # local high check
+        if all(p[i] >= p[i-j] for j in range(1, window+1)) and \
+           all(p[i] >= p[i+j] for j in range(1, min(window+1, n-i))):
+            for j in range(i - window, max(start, i - lookback), -1):
+                if all(p[j] >= p[j-k] for k in range(1, min(window+1, j+1))) and \
+                   all(p[j] >= p[j+k] for k in range(1, min(window+1, i-j))):
+                    if p[i] > p[j] and ind[i] < ind[j]:   # bearish div
+                        results.append((i, "bearish"))
+                    break
+    return results
+
+
+# ── 1. RSI / MACD DIVERGENCE ───────────────────────────────────
+
+st.markdown("### 1. RSI & MACD Divergence")
+
+if df["RSI"].notna().any() and df["MACD"].notna().any():
+    # Reuse pre-computed values from swing_summary
+    rsi_divs       = swing_summary["rsi_divs"]
+    macd_divs      = swing_summary["macd_divs"]
+    recent_rsi_bull  = swing_summary["div_rsi_bull"]
+    recent_rsi_bear  = swing_summary["div_rsi_bear"]
+    recent_macd_bull = swing_summary["div_macd_bull"]
+    recent_macd_bear = swing_summary["div_macd_bear"]
+
+    if recent_rsi_bull or recent_macd_bull:
+        status_line(
+            f"Bullish divergence detected ({'RSI' if recent_rsi_bull else ''}"
+            f"{' & ' if recent_rsi_bull and recent_macd_bull else ''}"
+            f"{'MACD' if recent_macd_bull else ''}) — "
+            "price made lower low but momentum didn't follow. Potential reversal up.",
+            "bullish")
+    elif recent_rsi_bear or recent_macd_bear:
+        status_line(
+            f"Bearish divergence detected ({'RSI' if recent_rsi_bear else ''}"
+            f"{' & ' if recent_rsi_bear and recent_macd_bear else ''}"
+            f"{'MACD' if recent_macd_bear else ''}) — "
+            "price made higher high but momentum weakening. Caution on new longs.",
+            "bearish")
+    else:
+        status_line("No significant divergence detected in recent bars — trend and momentum are aligned.", "neutral")
+
+    # Chart
+    fig_div = make_subplots(
+        rows=3, cols=1, shared_xaxes=True,
+        row_heights=[0.5, 0.25, 0.25],
+        subplot_titles=("Price", "RSI (14)", "MACD"))
+
+    fig_div.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"], name="Price",
+        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"),
+        row=1, col=1)
+
+    # Mark divergence points on price
+    for idx, div_type in rsi_divs:
+        color = "#0077BB" if div_type == "bullish" else "#EE7733"
+        sym   = "triangle-up" if div_type == "bullish" else "triangle-down"
+        y_val = float(df["low"].iloc[idx]) * 0.993 if div_type == "bullish" \
+                else float(df["high"].iloc[idx]) * 1.007
+        fig_div.add_trace(go.Scatter(
+            x=[df["time"].iloc[idx]], y=[y_val],
+            mode="markers", showlegend=False,
+            marker=dict(symbol=sym, size=12, color=color,
+                        line=dict(color="white", width=1))),
+            row=1, col=1)
+
+    fig_div.add_trace(go.Scatter(x=df["time"], y=df["RSI"],
+        name="RSI", line=dict(color="#F59E0B", width=2)), row=2, col=1)
+    fig_div.add_hline(y=70, line_dash="dash", line_color="red",   row=2, col=1)
+    fig_div.add_hline(y=30, line_dash="dash", line_color="lime",  row=2, col=1)
+
+    # Mark RSI divergence points
+    for idx, div_type in rsi_divs:
+        color = "#0077BB" if div_type == "bullish" else "#EE7733"
+        sym   = "triangle-up" if div_type == "bullish" else "triangle-down"
+        fig_div.add_trace(go.Scatter(
+            x=[df["time"].iloc[idx]], y=[df["RSI"].iloc[idx]],
+            mode="markers", showlegend=False,
+            marker=dict(symbol=sym, size=10, color=color,
+                        line=dict(color="white", width=1))),
+            row=2, col=1)
+
+    fig_div.add_trace(go.Scatter(x=df["time"], y=df["MACD"],
+        name="MACD", line=dict(color="#60A5FA", width=2)), row=3, col=1)
+    fig_div.add_trace(go.Scatter(x=df["time"], y=df["MACD_signal"],
+        name="Signal", line=dict(color="#F472B6", width=1.5)), row=3, col=1)
+    hist_colors = ["#22c55e" if v >= 0 else "#ef4444" for v in df["MACD_hist"].fillna(0)]
+    fig_div.add_trace(go.Bar(x=df["time"], y=df["MACD_hist"],
+        name="Hist", marker_color=hist_colors), row=3, col=1)
+
+    # Mark MACD divergence points
+    for idx, div_type in macd_divs:
+        color = "#0077BB" if div_type == "bullish" else "#EE7733"
+        sym   = "triangle-up" if div_type == "bullish" else "triangle-down"
+        fig_div.add_trace(go.Scatter(
+            x=[df["time"].iloc[idx]], y=[df["MACD"].iloc[idx]],
+            mode="markers", showlegend=False,
+            marker=dict(symbol=sym, size=10, color=color,
+                        line=dict(color="white", width=1))),
+            row=3, col=1)
+
+    fig_div.update_layout(height=650, margin=dict(t=40, b=10),
+                          xaxis_rangeslider_visible=False,
+                          plot_bgcolor="rgba(0,0,0,0)",
+                          paper_bgcolor="rgba(0,0,0,0)")
+    st.plotly_chart(fig_div, use_container_width=True)
+    st.caption(
+        "Blue ▲ = bullish divergence (price lower low, indicator higher low) — momentum not confirming the sell-off, "
+        "potential reversal up. Orange ▼ = bearish divergence (price higher high, indicator lower high) — "
+        "momentum weakening into new highs, watch for rollover. Divergence is highest-conviction on RSI and MACD together.")
+else:
+    st.info("Not enough data to compute divergence. Try a wider date range.")
+
+st.divider()
+
+# ── 2. ICHIMOKU CLOUD ──────────────────────────────────────────
+
+st.markdown("### 2. Ichimoku Cloud")
+
+def compute_ichimoku(df):
+    h, l, c = df["high"], df["low"], df["close"]
+    tenkan  = (h.rolling(9).max()  + l.rolling(9).min())  / 2
+    kijun   = (h.rolling(26).max() + l.rolling(26).min()) / 2
+    ssa     = ((tenkan + kijun) / 2).shift(26)
+    ssb     = ((h.rolling(52).max() + l.rolling(52).min()) / 2).shift(26)
+    chikou  = c.shift(-26)
+    return tenkan, kijun, ssa, ssb, chikou
+
+if len(df) >= 52:
+    tenkan, kijun, ssa, ssb, chikou = compute_ichimoku(df)
+    latest_t = tenkan.iloc[-1]
+    latest_k = kijun.iloc[-1]
+    latest_ssa = ssa.iloc[-1]
+    latest_ssb = ssb.iloc[-1]
+    price_now  = float(latest["close"])
+    cloud_top    = max(latest_ssa, latest_ssb) if pd.notna(latest_ssa) and pd.notna(latest_ssb) else np.nan
+    cloud_bottom = min(latest_ssa, latest_ssb) if pd.notna(latest_ssa) and pd.notna(latest_ssb) else np.nan
+
+    # Status
+    if pd.notna(cloud_top) and pd.notna(latest_t) and pd.notna(latest_k):
+        if price_now > cloud_top and latest_t > latest_k:
+            status_line(
+                f"Price above cloud + Tenkan ({latest_t:.4f}) above Kijun ({latest_k:.4f}) — "
+                "strong bullish structure. Trend is up, cloud is support.", "strong_bullish")
+        elif price_now > cloud_top:
+            status_line(
+                f"Price above cloud but Tenkan ≤ Kijun — uptrend intact but momentum softening. "
+                "Watch for Tenkan/Kijun cross.", "bullish")
+        elif price_now < cloud_bottom and latest_t < latest_k:
+            status_line(
+                f"Price below cloud + Tenkan ({latest_t:.4f}) below Kijun ({latest_k:.4f}) — "
+                "strong bearish structure. Avoid new longs.", "strong_bearish")
+        elif price_now < cloud_bottom:
+            status_line("Price below cloud — bearish trend. Wait for price to reclaim cloud before entering.", "bearish")
+        else:
+            status_line("Price inside the cloud — choppy/transitional zone. Wait for a clean break above or below.", "neutral")
+    else:
+        status_line("Insufficient data for full Ichimoku reading — extend range.", "neutral")
+
+    fig_ichi = go.Figure()
+
+    # Cloud fill (green when SSA > SSB, red when SSB > SSA)
+    cloud_green_ssa = np.where(ssa >= ssb, ssa, ssb)
+    cloud_green_ssb = np.where(ssa >= ssb, ssb, ssa)
+
+    fig_ichi.add_trace(go.Scatter(
+        x=df["time"], y=cloud_green_ssa,
+        name="SSA", line=dict(color="rgba(34,197,94,0.3)", width=0),
+        showlegend=False, hoverinfo="skip"))
+    fig_ichi.add_trace(go.Scatter(
+        x=df["time"], y=cloud_green_ssb,
+        name="SSB", line=dict(color="rgba(239,68,68,0.3)", width=0),
+        fill="tonexty", fillcolor="rgba(34,197,94,0.15)",
+        showlegend=False, hoverinfo="skip"))
+
+    fig_ichi.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"], name="Price",
+        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
+
+    fig_ichi.add_trace(go.Scatter(x=df["time"], y=tenkan,
+        name="Tenkan (9)", line=dict(color="#f87171", width=1.5)))
+    fig_ichi.add_trace(go.Scatter(x=df["time"], y=kijun,
+        name="Kijun (26)", line=dict(color="#60a5fa", width=1.5)))
+    fig_ichi.add_trace(go.Scatter(x=df["time"], y=ssa,
+        name="SSA (leading A)", line=dict(color="#22c55e", width=1, dash="dot")))
+    fig_ichi.add_trace(go.Scatter(x=df["time"], y=ssb,
+        name="SSB (leading B)", line=dict(color="#ef4444", width=1, dash="dot")))
+    fig_ichi.add_trace(go.Scatter(x=df["time"], y=chikou,
+        name="Chikou (lagging)", line=dict(color="#c084fc", width=1, dash="dash")))
+
+    fig_ichi.update_layout(
+        height=600, margin=dict(t=40, b=10),
+        xaxis_rangeslider_visible=False,
+        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
+        plot_bgcolor="#0e1117", paper_bgcolor="rgba(0,0,0,0)")
+    st.plotly_chart(fig_ichi, use_container_width=True)
+    st.caption(
+        "Tenkan (red, 9-period) = short-term momentum line. Kijun (blue, 26-period) = medium-term baseline / dynamic S&R. "
+        "Cloud (green = bullish, red = bearish) = future support/resistance zone. "
+        "Price above green cloud = bullish. Price below red cloud = bearish. Price inside cloud = indecision. "
+        "Tenkan crossing above Kijun = bullish signal (TK cross). Chikou (purple) above price = bullish confirmation. "
+        "Best swing entry: price breaks above cloud + Tenkan > Kijun + Chikou clear of price.")
+else:
+    st.info("Ichimoku requires at least 52 bars. Try a wider date range.")
+
+st.divider()
+
+# ── 3. ON BALANCE VOLUME (OBV) ─────────────────────────────────
+
+st.markdown("### 3. On Balance Volume (OBV)")
+
+if "volume" in df.columns and df["volume"].notna().any():
+    obv = [0]
+    for i in range(1, len(df)):
+        if df["close"].iloc[i] > df["close"].iloc[i-1]:
+            obv.append(obv[-1] + df["volume"].iloc[i])
+        elif df["close"].iloc[i] < df["close"].iloc[i-1]:
+            obv.append(obv[-1] - df["volume"].iloc[i])
+        else:
+            obv.append(obv[-1])
+    obv_series = pd.Series(obv, index=df.index)
+    obv_ema    = obv_series.ewm(span=20).mean()
+
+    # Divergence: compare last 20 bars trend of price vs OBV
+    price_trend = df["close"].iloc[-1] - df["close"].iloc[-20] if len(df) >= 20 else 0
+    obv_trend   = obv_series.iloc[-1]  - obv_series.iloc[-20]  if len(df) >= 20 else 0
+
+    if price_trend > 0 and obv_trend > 0:
+        status_line(
+            f"OBV rising with price — volume confirming the uptrend. Institutional accumulation likely.", "bullish")
+    elif price_trend > 0 and obv_trend < 0:
+        status_line(
+            "Bearish OBV divergence — price rising but OBV falling. Distribution on strength. "
+            "Smart money may be selling into rallies. Caution on new longs.", "bearish")
+    elif price_trend < 0 and obv_trend < 0:
+        status_line(
+            "OBV falling with price — volume confirming the downtrend. Avoid new longs.", "bearish")
+    elif price_trend < 0 and obv_trend > 0:
+        status_line(
+            "Bullish OBV divergence — price falling but OBV rising. Accumulation on weakness. "
+            "Smart money may be buying the dip. Watch for price reversal.", "bullish")
+    else:
+        status_line("OBV and price broadly aligned — no divergence signal.", "neutral")
+
+    fig_obv = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                            row_heights=[0.5, 0.5],
+                            subplot_titles=("Price", "On Balance Volume"))
+    fig_obv.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"], name="Price",
+        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"),
+        row=1, col=1)
+    fig_obv.add_trace(go.Scatter(x=df["time"], y=obv_series,
+        name="OBV", line=dict(color="#60A5FA", width=2)), row=2, col=1)
+    fig_obv.add_trace(go.Scatter(x=df["time"], y=obv_ema,
+        name="OBV EMA (20)", line=dict(color="#F59E0B", width=1.5, dash="dot")), row=2, col=1)
+    fig_obv.update_layout(height=550, margin=dict(t=40, b=10),
+                          xaxis_rangeslider_visible=False,
+                          plot_bgcolor="rgba(0,0,0,0)",
+                          paper_bgcolor="rgba(0,0,0,0)")
+    st.plotly_chart(fig_obv, use_container_width=True)
+    st.caption(
+        "OBV adds volume on up-close days, subtracts on down-close days — tracks whether volume is flowing in or out. "
+        "OBV rising with price = healthy uptrend, volume confirms. "
+        "OBV falling while price rises = bearish divergence, distribution — smart money selling into strength. "
+        "OBV rising while price falls = bullish divergence, accumulation — smart money buying the dip. "
+        "Yellow dotted line = 20-period EMA of OBV — OBV above its EMA = bullish bias.")
+else:
+    st.info("Volume data not available for OBV.")
+
+st.divider()
+
+# ── 4. FIBONACCI RETRACEMENT ───────────────────────────────────
+
+st.markdown("### 4. Fibonacci Retracement")
+
+lookback_fib = min(len(df), 60)
+fib_df       = df.tail(lookback_fib)
+swing_high   = float(fib_df["high"].max())
+swing_low    = float(fib_df["low"].min())
+fib_range    = swing_high - swing_low
+price_now    = float(latest["close"])
+
+FIB_LEVELS = {
+    "0%   (High)": 0.0,
+    "23.6%":       0.236,
+    "38.2%":       0.382,
+    "50%":         0.500,
+    "61.8% (Golden)": 0.618,
+    "78.6%":       0.786,
+    "100% (Low)":  1.0,
+}
+fib_prices = {lbl: swing_high - ratio * fib_range for lbl, ratio in FIB_LEVELS.items()}
+
+# Find which zone price is currently in
+current_zone = None
+sorted_levels = sorted(fib_prices.items(), key=lambda x: x[1], reverse=True)
+for i in range(len(sorted_levels) - 1):
+    upper_lbl, upper_val = sorted_levels[i]
+    lower_lbl, lower_val = sorted_levels[i+1]
+    if lower_val <= price_now <= upper_val:
+        current_zone = (lower_lbl, lower_val, upper_lbl, upper_val)
+        break
+
+if current_zone:
+    lower_lbl, lower_val, upper_lbl, upper_val = current_zone
+    pct_through = (price_now - lower_val) / (upper_val - lower_val) * 100 if upper_val != lower_val else 50
+    near_support = pct_through < 25
+    near_resist  = pct_through > 75
+    if "61.8" in lower_lbl or "50%" in lower_lbl or "38.2" in lower_lbl:
+        if near_support:
+            status_line(
+                f"Price at ${price_now:.4f} — sitting on the {lower_lbl} Fibonacci support level (${lower_val:.4f}). "
+                "Key retracement zone, high-probability swing long entry area.", "bullish")
+        else:
+            status_line(
+                f"Price at ${price_now:.4f} — between {lower_lbl} (${lower_val:.4f}) and "
+                f"{upper_lbl} (${upper_val:.4f}) Fibonacci levels. Next resistance: ${upper_val:.4f}.", "neutral")
+    elif near_resist:
+        status_line(
+            f"Price approaching {upper_lbl} resistance at ${upper_val:.4f}. "
+            "Watch for rejection here — consider tightening stops.", "caution")
+    else:
+        status_line(
+            f"Price at ${price_now:.4f} between {lower_lbl} (${lower_val:.4f}) and "
+            f"{upper_lbl} (${upper_val:.4f}). No key level immediately in play.", "neutral")
+else:
+    status_line(f"Price at ${price_now:.4f} — outside current Fibonacci range.", "neutral")
+
+fig_fib = go.Figure()
+fig_fib.add_trace(go.Candlestick(
+    x=fib_df["time"], open=fib_df["open"], high=fib_df["high"],
+    low=fib_df["low"], close=fib_df["close"], name="Price",
+    increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+    increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
+
+FIB_COLORS = {
+    "0%   (High)":      "#9ca3af",
+    "23.6%":            "#60a5fa",
+    "38.2%":            "#34d399",
+    "50%":              "#fbbf24",
+    "61.8% (Golden)":   "#f59e0b",
+    "78.6%":            "#f87171",
+    "100% (Low)":       "#9ca3af",
+}
+for lbl, price_level in fib_prices.items():
+    fig_fib.add_hline(
+        y=price_level,
+        line_dash="dot",
+        line_color=FIB_COLORS.get(lbl, "#9ca3af"),
+        line_width=1.5,
+        annotation_text=f"{lbl}  ${price_level:.4f}",
+        annotation_position="right",
+        annotation_font_size=11)
+
+fig_fib.update_layout(
+    height=550, margin=dict(t=40, b=10, r=140),
+    xaxis_rangeslider_visible=False,
+    plot_bgcolor="#0e1117", paper_bgcolor="rgba(0,0,0,0)")
+st.plotly_chart(fig_fib, use_container_width=True)
+st.caption(
+    f"Fibonacci levels drawn from swing low (${swing_low:.4f}) to swing high (${swing_high:.4f}) over last {lookback_fib} bars. "
+    "38.2%, 50%, and 61.8% are the most-watched pullback zones for swing entries — price often finds support here during healthy uptrends. "
+    "61.8% (golden ratio) is the deepest 'healthy' retracement before the move is considered failed. "
+    "A bounce off any of these levels with volume confirmation and RSI oversold = high-conviction entry.")
+
+st.divider()
+
+# ── 5. PARABOLIC SAR ───────────────────────────────────────────
+
+st.markdown("### 5. Parabolic SAR")
+
+def compute_psar(df, initial_af=0.02, step_af=0.02, max_af=0.2):
+    high  = df["high"].values
+    low   = df["low"].values
+    close = df["close"].values
+    n     = len(df)
+    psar  = close.copy()
+    bull  = np.ones(n, dtype=bool)
+    af    = np.full(n, initial_af)
+    ep    = np.zeros(n)   # extreme point
+
+    # Initialise
+    bull[0] = close[1] > close[0]
+    psar[0] = low[0]  if bull[0] else high[0]
+    ep[0]   = high[0] if bull[0] else low[0]
+
+    for i in range(1, n):
+        prev_psar = psar[i-1]
+        prev_bull = bull[i-1]
+        prev_ep   = ep[i-1]
+        prev_af   = af[i-1]
+
+        # Projected SAR
+        new_psar = prev_psar + prev_af * (prev_ep - prev_psar)
+
+        if prev_bull:
+            new_psar = min(new_psar, low[i-1], low[max(0, i-2)])
+            if low[i] < new_psar:          # reversal
+                bull[i] = False
+                psar[i] = prev_ep
+                ep[i]   = low[i]
+                af[i]   = initial_af
+            else:
+                bull[i] = True
+                psar[i] = new_psar
+                if high[i] > prev_ep:
+                    ep[i] = high[i]
+                    af[i] = min(prev_af + step_af, max_af)
+                else:
+                    ep[i] = prev_ep
+                    af[i] = prev_af
+        else:
+            new_psar = max(new_psar, high[i-1], high[max(0, i-2)])
+            if high[i] > new_psar:         # reversal
+                bull[i] = True
+                psar[i] = prev_ep
+                ep[i]   = high[i]
+                af[i]   = initial_af
+            else:
+                bull[i] = False
+                psar[i] = new_psar
+                if low[i] < prev_ep:
+                    ep[i] = low[i]
+                    af[i] = min(prev_af + step_af, max_af)
+                else:
+                    ep[i] = prev_ep
+                    af[i] = prev_af
+
+    return pd.Series(psar, index=df.index), pd.Series(bull, index=df.index)
+
+if len(df) >= 10:
+    psar_vals, psar_bull = compute_psar(df)
+    current_psar_bull = bool(psar_bull.iloc[-1])
+    current_psar      = float(psar_vals.iloc[-1])
+    psar_distance_pct = abs(price_now - current_psar) / price_now * 100
+
+    # Detect recent flip
+    prev_bull_psar = bool(psar_bull.iloc[-2]) if len(psar_bull) > 1 else current_psar_bull
+    just_flipped_bull = current_psar_bull and not prev_bull_psar
+    just_flipped_bear = not current_psar_bull and prev_bull_psar
+
+    if just_flipped_bull:
+        status_line(
+            f"Parabolic SAR just flipped bullish — SAR dot moved below price at ${current_psar:.4f}. "
+            "Fresh uptrend signal. Strong entry confirmation.", "strong_bullish")
+    elif just_flipped_bear:
+        status_line(
+            f"Parabolic SAR just flipped bearish — SAR dot moved above price at ${current_psar:.4f}. "
+            "Trend reversed. Exit or avoid new longs.", "strong_bearish")
+    elif current_psar_bull:
+        status_line(
+            f"SAR bullish — dot below price at ${current_psar:.4f} "
+            f"({psar_distance_pct:.1f}% below). Uptrend intact. SAR is trailing stop reference.", "bullish")
+    else:
+        status_line(
+            f"SAR bearish — dot above price at ${current_psar:.4f} "
+            f"({psar_distance_pct:.1f}% above). Downtrend. Wait for SAR to flip below price.", "bearish")
+
+    # Split into bull/bear for colour coding
+    psar_bull_y = psar_vals.where(psar_bull,  other=np.nan)
+    psar_bear_y = psar_vals.where(~psar_bull, other=np.nan)
+
+    fig_psar = go.Figure()
+    fig_psar.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"], name="Price",
+        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
+    fig_psar.add_trace(go.Scatter(
+        x=df["time"], y=psar_bull_y,
+        mode="markers", name="SAR Bullish",
+        marker=dict(symbol="circle", size=5, color="#00c853")))
+    fig_psar.add_trace(go.Scatter(
+        x=df["time"], y=psar_bear_y,
+        mode="markers", name="SAR Bearish",
+        marker=dict(symbol="circle", size=5, color="#ff1744")))
+
+    # Add ATR from existing df for reference overlay
+    if df["ATR"].notna().any():
+        fig_psar.add_trace(go.Scatter(
+            x=df["time"], y=df["EMA_50"],
+            name="EMA 50", line=dict(color="#fbbf24", width=1.5, dash="dot")))
+
+    fig_psar.update_layout(
+        height=500, margin=dict(t=40, b=10),
+        xaxis_rangeslider_visible=False,
+        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
+        plot_bgcolor="#0e1117", paper_bgcolor="rgba(0,0,0,0)")
+    st.plotly_chart(fig_psar, use_container_width=True)
+    st.caption(
+        "Parabolic SAR dots appear below price in uptrends (green = bullish) and above price in downtrends (red = bearish). "
+        "When dots flip from above to below price = bullish reversal signal. Flip from below to above = exit / trend ended. "
+        "SAR accelerates toward price as the trend matures — when it gets very close, reversal is near. "
+        "Works best in trending markets; generates many false signals in choppy/sideways conditions. "
+        "Use with ADX > 25 to filter: only trust SAR signals when ADX confirms a trend is present.")
+else:
+    st.info("Not enough data for Parabolic SAR.")
+
+st.divider()
 
 st.caption(f"Data: Yahoo Finance | Auto-refreshes every 5 min | Last run: {ts} | {timeframe} | {date_start.strftime('%d %b %Y')} to {date_end.strftime('%d %b %Y')}")
