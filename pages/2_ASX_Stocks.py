@@ -114,6 +114,15 @@ if timeframe == "Monthly" and range_days < 180:
     date_start = date_end - timedelta(days=730)
     range_days = 730
 
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Chart 3 — ATR Trail Stop**")
+atr_trail_mult = st.sidebar.slider(
+    "Multiplier (× ATR 14)",
+    min_value=1.0, max_value=3.0, value=1.5, step=0.1,
+    help="Trail stop = highest close since entry minus this × ATR(14). "
+         "Lower = tighter/faster exit. Higher = more room to breathe."
+)
+
 if st.sidebar.button("Force Refresh"):
     st.cache_data.clear()
     st.rerun()
@@ -583,7 +592,9 @@ def build_chart2(df):
 # EXIT: any single ST flips direction OR price touches Fibonacci BB band (200, 2.618)
 
 # ── CHART 3: Long-only. BUY when all 3 STs bull + RSI(7)>50.
-# EXIT when in a long and: any ST flips red OR price touches UPPER Fib BB.
+# EXIT when in a long and: any ST flips red OR price touches UPPER Fib BB
+#           OR price closes below ATR trailing stop.
+# ATR trailing stop trails at highest_close - (atr_mult × ATR14), ratcheting up only.
 # No sell signals — short trades not used.
 
 def compute_fib_bb(close_series, length=200, mult=2.618):
@@ -592,7 +603,7 @@ def compute_fib_bb(close_series, length=200, mult=2.618):
     return basis, basis + mult * dev, basis - mult * dev
 
 
-def compute_chart3_signals(df):
+def compute_chart3_signals(df, atr_trail_mult=1.5):
     df = df.copy()
 
     df["c3_st1"], df["c3_dir1"] = compute_supertrend(df, period=10, multiplier=1.0)
@@ -609,11 +620,21 @@ def compute_chart3_signals(df):
     except Exception:
         df["c3_fib_basis"] = df["c3_fib_upper"] = df["c3_fib_lower"] = np.nan
 
-    df["c3_buy"]  = None
-    df["c3_exit"] = None
+    # ATR(14) for trailing stop — reuse existing ATR if available, else compute fresh
+    try:
+        atr14 = ta.volatility.AverageTrueRange(
+            df["high"], df["low"], df["close"], window=14
+        ).average_true_range()
+    except Exception:
+        atr14 = pd.Series(np.nan, index=df.index)
 
-    in_long       = False   # are we currently holding a long position?
+    df["c3_buy"]       = None
+    df["c3_exit"]      = None
+    df["c3_trail_stop"] = np.nan   # ATR trailing stop level — NaN when not in a trade
+
+    in_long       = False
     prev_all_bull = False
+    peak_close    = np.nan   # highest close since entry, used to ratchet stop up
 
     for i in range(1, len(df)):
         d1  = df["c3_dir1"].iloc[i];  pd1 = df["c3_dir1"].iloc[i-1]
@@ -622,28 +643,42 @@ def compute_chart3_signals(df):
         rsi7 = df["c3_rsi7"].iloc[i]
         cls  = df["close"].iloc[i]
         fub  = df["c3_fib_upper"].iloc[i]
+        atr  = atr14.iloc[i]
 
         all_bull = (d1 == 1 and d2 == 1 and d3 == 1)
 
         if in_long:
-            # Exit if any ST turned red
+            # Ratchet peak close upward only
+            if pd.notna(cls):
+                peak_close = max(peak_close, cls)
+
+            # Compute trailing stop for this bar
+            if pd.notna(atr) and pd.notna(peak_close):
+                trail_stop = peak_close - atr_trail_mult * atr
+                df.at[df.index[i], "c3_trail_stop"] = trail_stop
+            else:
+                trail_stop = np.nan
+
+            # Exit conditions
             any_st_flipped_red = (
                 (d1 == -1 and pd1 == 1) or
                 (d2 == -1 and pd2 == 1) or
                 (d3 == -1 and pd3 == 1)
             )
-            # Exit if price touched or exceeded the UPPER Fib BB (profit target / overextended)
-            upper_fib_touch = pd.notna(fub) and cls >= fub
+            upper_fib_touch  = pd.notna(fub) and cls >= fub
+            trail_stop_hit   = pd.notna(trail_stop) and cls <= trail_stop
 
-            if any_st_flipped_red or upper_fib_touch:
+            if any_st_flipped_red or upper_fib_touch or trail_stop_hit:
                 df.at[df.index[i], "c3_exit"] = cls
-                in_long = False
+                in_long    = False
+                peak_close = np.nan
 
         else:
             # Enter long on first bar where all 3 STs are bull + RSI(7) > 50
             if all_bull and not prev_all_bull and pd.notna(rsi7) and rsi7 > 50:
                 df.at[df.index[i], "c3_buy"] = cls
-                in_long = True
+                in_long    = True
+                peak_close = cls   # initialise peak at entry close
 
         prev_all_bull = all_bull
 
@@ -708,8 +743,19 @@ def build_chart3(df):
             name="Fib BB Basis (SMA 200)", line=dict(color="#fbbf24", width=1, dash="dash"),
             hovertemplate="Fib BB Basis: %{y:.4f}<extra></extra>"))
 
-    # RSI(7) overlay as a secondary axis annotation at signal points
-    # (full RSI panel is already in the RSI chart below; here just reference value in hover)
+    # ATR Trailing Stop — only visible while in a long (NaN elsewhere = clean chart)
+    if "c3_trail_stop" in df.columns and df["c3_trail_stop"].notna().any():
+        # atr_trail_mult is in scope from the Streamlit sidebar slider
+        try:
+            mult_label = f"{atr_trail_mult:.1f}"
+        except Exception:
+            mult_label = "1.5"
+        fig.add_trace(go.Scatter(
+            x=df["time"], y=df["c3_trail_stop"],
+            name=f"ATR Trail Stop ({mult_label}×)",
+            line=dict(color="#f97316", width=1.5, dash="dashdot"),
+            connectgaps=False,
+            hovertemplate="ATR Trail Stop: %{y:.4f}<extra></extra>"))
 
     # Buy / Exit markers only — no sell (long-only strategy)
     buy_df  = df[df["c3_buy"].notna()]
@@ -1021,7 +1067,7 @@ if missing:
     )
 
 df     = triple_supertrend_signals(df)
-df     = compute_chart3_signals(df)
+df     = compute_chart3_signals(df, atr_trail_mult=atr_trail_mult)
 latest = df.iloc[-1]
 
 if pd.isna(latest["EMA_200"]) and timeframe in ("Weekly", "Monthly"):
@@ -1232,8 +1278,9 @@ st.plotly_chart(fig3, use_container_width=True)
 st.caption(
     "Long-only strategy. ST params: (10,1.0), (11,2.0), (12,3.0). "
     "Blue ▲ BUY: all 3 STs turn green + RSI(7) > 50, on the first bar of alignment. "
-    "Yellow ◆ EXIT: close long when any ST turns red OR price touches upper Fib BB (SMA 200 + 2.618σ). "
-    "Exits only shown while a long position is active.")
+    "Yellow ◆ EXIT: close long when any ST turns red, upper Fib BB hit, or price closes below ATR trail stop. "
+    f"Orange dashed line = ATR(14) trail stop ({atr_trail_mult:.1f}× ATR below highest close since entry) — only shown while in a long. "
+    "Adjust multiplier in the sidebar — lower = tighter, higher = more room.")
 
 st.divider()
 
