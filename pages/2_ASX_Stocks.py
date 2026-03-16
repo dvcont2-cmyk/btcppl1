@@ -52,7 +52,7 @@ SWING_TRADE_SUITABLE = {"PDN.AX", "CXO.AX", "NST.AX", "PLS.AX", "EPM.AX"}
 st.sidebar.header("Settings")
 stock_label = st.sidebar.selectbox("Select Stock / ETF", list(ASX_STOCKS.keys()))
 ticker      = ASX_STOCKS[stock_label]
-timeframe   = st.sidebar.radio("Timeframe", ["Hourly", "Daily", "Weekly", "Monthly"])
+timeframe   = st.sidebar.radio("Timeframe", ["Hourly", "Daily", "Weekly", "Monthly"], index=1)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Chart Range**")
@@ -60,7 +60,7 @@ range_option = st.sidebar.selectbox(
     "Quick Select",
     ["1 Day", "1 Week", "1 Month", "3 Months", "6 Months", "1 Year",
      "2 Years", "3 Years", "5 Years", "Custom"],
-    index=5          # default: 1 Year
+    index=4          # default: 6 Months
 )
 range_map = {
     "1 Day":    1,   "1 Week":  7,   "1 Month":  30,
@@ -485,27 +485,41 @@ def build_chart2(df):
 
 
 
-    # Candles split into 4 groups by bull count — each group gets its own colour.
-    # go.Candlestick doesn't support per-bar colours, so we use 4 separate traces.
-    # Candles split into 4 groups by bull count — each group gets its own colour.
-    CANDLE_STYLES = {
-        3: ("#22c55e", "3/3 Bull"),
-        2: ("#86efac", "2/3 Bull"),
-        1: ("#fca5a5", "1/3 Bull"),
-        0: ("#ef4444", "0/3 Bull"),
-    }
+    # Single Candlestick trace (avoids Plotly "undefined" legend group bug from multiple Candlestick traces).
+    # Candle body tinting by ST bull count is achieved via coloured scatter bar overlays underneath.
     df["_bull_count"] = df.apply(
         lambda r: sum(1 for d in [r["dir1"], r["dir2"], r["dir3"]] if d == 1), axis=1)
-    for bull_cnt, (color, lbl) in CANDLE_STYLES.items():
-        sub = df[df["_bull_count"] == bull_cnt]
+
+    BULL_COUNT_COLORS = {3: "#22c55e", 2: "#86efac", 1: "#fca5a5", 0: "#ef4444"}
+    BULL_COUNT_LABELS = {3: "3/3 Bull", 2: "2/3 Bull", 1: "1/3 Bull", 0: "0/3 Bull"}
+
+    # Draw coloured body bars (open→close range) as thin bar traces — one per bull-count group
+    for cnt, color in BULL_COUNT_COLORS.items():
+        sub = df[df["_bull_count"] == cnt]
         if sub.empty:
             continue
-        fig.add_trace(go.Candlestick(
-            x=sub["time"], open=sub["open"], high=sub["high"],
-            low=sub["low"], close=sub["close"],
-            name=lbl,
-            increasing_line_color=color, decreasing_line_color=color,
-            increasing_fillcolor=color,  decreasing_fillcolor=color))
+        body_base = sub[["open", "close"]].min(axis=1)
+        body_top  = sub[["open", "close"]].max(axis=1)
+        fig.add_trace(go.Bar(
+            x=sub["time"],
+            y=(body_top - body_base).values,
+            base=body_base.values,
+            name=BULL_COUNT_LABELS[cnt],
+            marker_color=color,
+            marker_opacity=0.6,
+            width=0.6 * (1 if len(df) < 100 else 0.5),
+            showlegend=True))
+
+    # Single standard Candlestick on top — wicks visible, body transparent
+    fig.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"],
+        name="Price",
+        increasing_line_color="rgba(34,197,94,0.5)",
+        decreasing_line_color="rgba(239,68,68,0.5)",
+        increasing_fillcolor="rgba(0,0,0,0)",
+        decreasing_fillcolor="rgba(0,0,0,0)",
+        showlegend=False))
 
     # ST lines — all green when bull, all red when bear (Nordman style)
     add_st_line(fig, df, "st1", "dir1", "ST1 (7, 3.0)")
