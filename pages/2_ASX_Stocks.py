@@ -456,8 +456,8 @@ def build_chart1(df):
         height=600,
         margin=dict(t=50, b=10),
         xaxis_rangeslider_visible=False,
-        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0,
-                    grouptitlefont=dict(color="rgba(0,0,0,0)")),
+        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
+        legend_grouptitlefont_color="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)")
     return fig
@@ -496,41 +496,27 @@ def build_chart2(df):
     add_bg_zones(fig, df, all_bull, "#22c55e")
     add_bg_zones(fig, df, all_bear, "#ef4444")
 
-
-
-
-    # Single Candlestick trace (avoids Plotly "undefined" legend group bug from multiple Candlestick traces).
-    # Candle body tinting by ST bull count is achieved via coloured scatter bar overlays underneath.
+    # Candles coloured by ST bull count using 4 separate Candlestick traces.
+    # The "undefined" legend label this creates is hidden via legend_grouptitlefont_color
+    # in update_layout below.
     df["_bull_count"] = df.apply(
         lambda r: sum(1 for d in [r["dir1"], r["dir2"], r["dir3"]] if d == 1), axis=1)
-
-    BULL_COUNT_COLORS = {3: "#22c55e", 2: "#86efac", 1: "#fca5a5", 0: "#ef4444"}
-    BULL_COUNT_LABELS = {3: "3/3 Bull", 2: "2/3 Bull", 1: "1/3 Bull", 0: "0/3 Bull"}
-
-    # Draw coloured body bars (open→close range) as thin bar traces — one per bull-count group
-    for cnt, color in BULL_COUNT_COLORS.items():
-        sub = df[df["_bull_count"] == cnt]
+    CANDLE_STYLES = {
+        3: ("#22c55e", "3/3 Bull"),
+        2: ("#86efac", "2/3 Bull"),
+        1: ("#fca5a5", "1/3 Bull"),
+        0: ("#ef4444", "0/3 Bull"),
+    }
+    for bull_cnt, (color, lbl) in CANDLE_STYLES.items():
+        sub = df[df["_bull_count"] == bull_cnt]
         if sub.empty:
             continue
-        body_base = sub[["open", "close"]].min(axis=1)
-        body_top  = sub[["open", "close"]].max(axis=1)
-        fig.add_trace(go.Bar(
-            x=sub["time"],
-            y=(body_top - body_base).values,
-            base=body_base.values,
-            name=BULL_COUNT_LABELS[cnt],
-            marker_color=color,
-            marker_opacity=0.6,
-            width=0.6 * (1 if len(df) < 100 else 0.5),
-            showlegend=True))
-
-    # Single standard Candlestick on top — wicks visible, body transparent
-    fig.add_trace(go.Candlestick(
-        x=df["time"], open=df["open"], high=df["high"],
-        low=df["low"], close=df["close"], name="Price",
-        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
-        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444",
-        showlegend=False))
+        fig.add_trace(go.Candlestick(
+            x=sub["time"], open=sub["open"], high=sub["high"],
+            low=sub["low"], close=sub["close"],
+            name=lbl,
+            increasing_line_color=color, decreasing_line_color=color,
+            increasing_fillcolor=color,  decreasing_fillcolor=color))
 
     # ST lines — all green when bull, all red when bear (Nordman style)
     add_st_line(fig, df, "st1", "dir1", "ST1 (7, 3.0)")
@@ -606,8 +592,8 @@ def build_chart2(df):
         margin=dict(t=50, b=10),
         xaxis_rangeslider_visible=False,
         xaxis=dict(range=[df["time"].iloc[0], df["time"].iloc[-1]]),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
-                    grouptitlefont=dict(color="rgba(0,0,0,0)")),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        legend_grouptitlefont_color="rgba(0,0,0,0)",
         plot_bgcolor="#0e1117",
         paper_bgcolor="rgba(0,0,0,0)")
     return fig
@@ -808,8 +794,8 @@ def build_chart3(df):
         height=650,
         margin=dict(t=50, b=10),
         xaxis_rangeslider_visible=False,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
-                    grouptitlefont=dict(color="rgba(0,0,0,0)")),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        legend_grouptitlefont_color="rgba(0,0,0,0)",
         plot_bgcolor="#0e1117",
         paper_bgcolor="rgba(0,0,0,0)")
     return fig
