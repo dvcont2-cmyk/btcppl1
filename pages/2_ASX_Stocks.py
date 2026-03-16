@@ -406,12 +406,12 @@ def add_st_line(fig, df, st_col, dir_col, name, bull_color="#00c853", bear_color
     fig.add_trace(go.Scatter(
         x=x, y=bull_y, mode="lines",
         name=f"{name} Bull", line=dict(color=bull_color, width=width),
-        connectgaps=False, legendgroup=lg_bull,
+        connectgaps=False, legendgroup=lg_bull, legendgrouptitle_text="",
         hovertemplate=f"{name}: %{{y:.4f}}<extra></extra>"))
     fig.add_trace(go.Scatter(
         x=x, y=bear_y, mode="lines",
         name=f"{name} Bear", line=dict(color=bear_color, width=width),
-        connectgaps=False, legendgroup=lg_bear,
+        connectgaps=False, legendgroup=lg_bear, legendgrouptitle_text="",
         hovertemplate=f"{name}: %{{y:.4f}}<extra></extra>"))
 
 
@@ -420,7 +420,7 @@ def build_chart1(df):
     fig.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
         low=df["low"], close=df["close"],
-        name="Price",
+        name="Price", legendgroup="Price", legendgrouptitle_text="",
         increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
         increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
 
@@ -491,6 +491,7 @@ def build_chart2(df):
 
     # Candles split into 4 groups by bull count — each group gets its own colour.
     # go.Candlestick doesn't support per-bar colours, so we use 4 separate traces.
+    # legendgrouptitle_text="" suppresses the "undefined" group heading in Plotly legend.
     CANDLE_STYLES = {
         3: ("#22c55e", "3/3 Bull"),
         2: ("#86efac", "2/3 Bull"),
@@ -507,6 +508,8 @@ def build_chart2(df):
             x=sub["time"], open=sub["open"], high=sub["high"],
             low=sub["low"], close=sub["close"],
             name=lbl,
+            legendgroup=lbl.replace("/", "_").replace(" ", "_"),
+            legendgrouptitle_text="",
             increasing_line_color=color, decreasing_line_color=color,
             increasing_fillcolor=color,  decreasing_fillcolor=color))
 
@@ -583,14 +586,11 @@ def build_chart2(df):
         height=650,
         margin=dict(t=50, b=10),
         xaxis_rangeslider_visible=False,
+        xaxis=dict(range=[df["time"].iloc[0], df["time"].iloc[-1]]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         plot_bgcolor="#0e1117",
         paper_bgcolor="rgba(0,0,0,0)")
-    return fig
-
-
-
-# ── CHART 3: Triple SuperTrend + RSI(7) + Fibonacci Bollinger Bands ──────────
+    return fig# ── CHART 3: Triple SuperTrend + RSI(7) + Fibonacci Bollinger Bands ──────────
 # Based on TradingView script by TRW_meir (jw3P5XtU)
 # ST params: (10,1.0), (11,2.0), (12,3.0) — tighter ATR periods than Chart 1 & 2
 # BUY:  all 3 STs bullish AND RSI(7) > 50 — first bar of full alignment only
@@ -718,7 +718,7 @@ def build_chart3(df):
     fig.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
         low=df["low"],  close=df["close"],
-        name="Price",
+        name="Price", legendgroup="Price", legendgrouptitle_text="",
         increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
         increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
 
@@ -1659,7 +1659,8 @@ with row1_r:
     fig_bb = go.Figure()
     fig_bb.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
-        low=df["low"], close=df["close"], name="Price"))
+        low=df["low"], close=df["close"], name="Price",
+        legendgroup="Price", legendgrouptitle_text=""))
     fig_bb.add_trace(go.Scatter(x=df["time"], y=df["BB_upper"],
         name="BB Upper", line=dict(color="gray", dash="dot", width=1)))
     fig_bb.add_trace(go.Scatter(x=df["time"], y=df["BB_lower"],
@@ -2013,6 +2014,7 @@ if df["RSI"].notna().any() and df["MACD"].notna().any():
     fig_div.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
         low=df["low"], close=df["close"], name="Price",
+        legendgroup="Price", legendgrouptitle_text="",
         increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
         increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"),
         row=1, col=1)
@@ -2142,6 +2144,7 @@ if len(df) >= 52:
     fig_ichi.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
         low=df["low"], close=df["close"], name="Price",
+        legendgroup="Price", legendgrouptitle_text="",
         increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
         increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
 
@@ -2216,6 +2219,7 @@ if "volume" in df.columns and df["volume"].notna().any():
     fig_obv.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
         low=df["low"], close=df["close"], name="Price",
+        legendgroup="Price", legendgrouptitle_text="",
         increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
         increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"),
         row=1, col=1)
@@ -2300,6 +2304,7 @@ fig_fib = go.Figure()
 fig_fib.add_trace(go.Candlestick(
     x=fib_df["time"], open=fib_df["open"], high=fib_df["high"],
     low=fib_df["low"], close=fib_df["close"], name="Price",
+    legendgroup="Price", legendgrouptitle_text="",
     increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
     increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
 
@@ -2434,6 +2439,7 @@ if len(df) >= 10:
     fig_psar.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
         low=df["low"], close=df["close"], name="Price",
+        legendgroup="Price", legendgrouptitle_text="",
         increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
         increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
     fig_psar.add_trace(go.Scatter(
