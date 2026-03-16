@@ -399,19 +399,15 @@ def add_st_line(fig, df, st_col, dir_col, name, bull_color="#00c853", bear_color
             else:
                 bear_y[i-1] = y[i-1]
 
-    # Underscores in legendgroup prevent Plotly "undefined" legend bug
-    lg_bull = name.replace(" ", "_") + "_bull"
-    lg_bear = name.replace(" ", "_") + "_bear"
-
     fig.add_trace(go.Scatter(
         x=x, y=bull_y, mode="lines",
         name=f"{name} Bull", line=dict(color=bull_color, width=width),
-        connectgaps=False, legendgroup=lg_bull, legendgrouptitle_text="",
+        connectgaps=False,
         hovertemplate=f"{name}: %{{y:.4f}}<extra></extra>"))
     fig.add_trace(go.Scatter(
         x=x, y=bear_y, mode="lines",
         name=f"{name} Bear", line=dict(color=bear_color, width=width),
-        connectgaps=False, legendgroup=lg_bear, legendgrouptitle_text="",
+        connectgaps=False,
         hovertemplate=f"{name}: %{{y:.4f}}<extra></extra>"))
 
 
@@ -420,7 +416,7 @@ def build_chart1(df):
     fig.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
         low=df["low"], close=df["close"],
-        name="Price", legendgroup="Price", legendgrouptitle_text="",
+        name="Price",
         increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
         increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
 
@@ -491,7 +487,7 @@ def build_chart2(df):
 
     # Candles split into 4 groups by bull count — each group gets its own colour.
     # go.Candlestick doesn't support per-bar colours, so we use 4 separate traces.
-    # legendgrouptitle_text="" suppresses the "undefined" group heading in Plotly legend.
+    # Candles split into 4 groups by bull count — each group gets its own colour.
     CANDLE_STYLES = {
         3: ("#22c55e", "3/3 Bull"),
         2: ("#86efac", "2/3 Bull"),
@@ -508,8 +504,6 @@ def build_chart2(df):
             x=sub["time"], open=sub["open"], high=sub["high"],
             low=sub["low"], close=sub["close"],
             name=lbl,
-            legendgroup=lbl.replace("/", "_").replace(" ", "_"),
-            legendgrouptitle_text="",
             increasing_line_color=color, decreasing_line_color=color,
             increasing_fillcolor=color,  decreasing_fillcolor=color))
 
@@ -718,7 +712,7 @@ def build_chart3(df):
     fig.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
         low=df["low"],  close=df["close"],
-        name="Price", legendgroup="Price", legendgrouptitle_text="",
+        name="Price",
         increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
         increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
 
@@ -1030,7 +1024,7 @@ def compute_swing_summary(df, price, is_swing_suitable):
     if result["fib_signal"] == "near_resistance":
         _, _, ul, uv = result["fib_zone"]
         take_profit_note = f"⚠️ Price near {ul} Fibonacci resistance — if you're in a position, consider taking partial profits."
-    if result["ichi_signal"] in ("strong_bull",) and psar == "just_flipped_bear":
+    if result["ichi_signal"] in ("strong_bull") and psar == "just_flipped_bear":
         take_profit_note = "⚠️ SAR just flipped bearish despite bullish Ichimoku — trend may be topping. Consider scaling out."
     if obv == "bearish_div" and bull_pts > 3:
         take_profit_note = "⚠️ OBV bearish divergence while price is elevated — distribution signal. Consider taking profits."
@@ -1659,8 +1653,7 @@ with row1_r:
     fig_bb = go.Figure()
     fig_bb.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
-        low=df["low"], close=df["close"], name="Price",
-        legendgroup="Price", legendgrouptitle_text=""))
+        low=df["low"], close=df["close"], name="Price"))
     fig_bb.add_trace(go.Scatter(x=df["time"], y=df["BB_upper"],
         name="BB Upper", line=dict(color="gray", dash="dot", width=1)))
     fig_bb.add_trace(go.Scatter(x=df["time"], y=df["BB_lower"],
@@ -2014,7 +2007,6 @@ if df["RSI"].notna().any() and df["MACD"].notna().any():
     fig_div.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
         low=df["low"], close=df["close"], name="Price",
-        legendgroup="Price", legendgrouptitle_text="",
         increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
         increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"),
         row=1, col=1)
@@ -2144,7 +2136,6 @@ if len(df) >= 52:
     fig_ichi.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
         low=df["low"], close=df["close"], name="Price",
-        legendgroup="Price", legendgrouptitle_text="",
         increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
         increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
 
@@ -2219,7 +2210,6 @@ if "volume" in df.columns and df["volume"].notna().any():
     fig_obv.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
         low=df["low"], close=df["close"], name="Price",
-        legendgroup="Price", legendgrouptitle_text="",
         increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
         increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"),
         row=1, col=1)
@@ -2304,7 +2294,6 @@ fig_fib = go.Figure()
 fig_fib.add_trace(go.Candlestick(
     x=fib_df["time"], open=fib_df["open"], high=fib_df["high"],
     low=fib_df["low"], close=fib_df["close"], name="Price",
-    legendgroup="Price", legendgrouptitle_text="",
     increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
     increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
 
@@ -2439,7 +2428,6 @@ if len(df) >= 10:
     fig_psar.add_trace(go.Candlestick(
         x=df["time"], open=df["open"], high=df["high"],
         low=df["low"], close=df["close"], name="Price",
-        legendgroup="Price", legendgrouptitle_text="",
         increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
         increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
     fig_psar.add_trace(go.Scatter(
