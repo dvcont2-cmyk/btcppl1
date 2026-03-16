@@ -18,6 +18,9 @@ st.markdown("""
 [data-testid="stMetricDelta"] { font-size: 0.75rem !important; }
 [data-testid="stMetric"]      { padding: 4px 0px !important; }
 .block-container              { padding-top: 2.75rem !important; }
+/* Hide Plotly legend group title — removes the "undefined" label on candlestick charts */
+.legendgrouptitle text        { display: none !important; }
+.legendgrouptitle             { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -496,27 +499,40 @@ def build_chart2(df):
     add_bg_zones(fig, df, all_bull, "#22c55e")
     add_bg_zones(fig, df, all_bear, "#ef4444")
 
-    # Candles coloured by ST bull count using 4 separate Candlestick traces.
-    # The "undefined" legend label this creates is hidden via legend_grouptitlefont_color
-    # in update_layout below.
+    # Bull count tinting: one thin vrect per bar coloured by how many STs are bullish.
+    # Using vrects (not multiple Candlestick traces) keeps a single continuous time axis
+    # so ST line Scatter traces align correctly across the full date range.
     df["_bull_count"] = df.apply(
         lambda r: sum(1 for d in [r["dir1"], r["dir2"], r["dir3"]] if d == 1), axis=1)
-    CANDLE_STYLES = {
-        3: ("#22c55e", "3/3 Bull"),
-        2: ("#86efac", "2/3 Bull"),
-        1: ("#fca5a5", "1/3 Bull"),
-        0: ("#ef4444", "0/3 Bull"),
-    }
-    for bull_cnt, (color, lbl) in CANDLE_STYLES.items():
-        sub = df[df["_bull_count"] == bull_cnt]
-        if sub.empty:
-            continue
-        fig.add_trace(go.Candlestick(
-            x=sub["time"], open=sub["open"], high=sub["high"],
-            low=sub["low"], close=sub["close"],
-            name=lbl,
-            increasing_line_color=color, decreasing_line_color=color,
-            increasing_fillcolor=color,  decreasing_fillcolor=color))
+    TINT = {3: "rgba(34,197,94,0.25)",  2: "rgba(134,239,172,0.20)",
+            1: "rgba(252,165,165,0.20)", 0: "rgba(239,68,68,0.25)"}
+
+    times = df["time"].values
+    for i in range(len(df)):
+        color = TINT[df["_bull_count"].iloc[i]]
+        x0 = times[i]
+        x1 = times[i+1] if i + 1 < len(times) else x0
+        fig.add_vrect(x0=x0, x1=x1, fillcolor=color,
+                      opacity=1.0, layer="below", line_width=0)
+
+    # Legend entries for the tint levels (invisible scatter traces just for the legend)
+    TINT_LABELS = {3: ("3/3 Bull", "#22c55e"), 2: ("2/3 Bull", "#86efac"),
+                   1: ("1/3 Bull", "#fca5a5"), 0: ("0/3 Bull", "#ef4444")}
+    for cnt, (lbl, color) in TINT_LABELS.items():
+        if (df["_bull_count"] == cnt).any():
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None], mode="markers",
+                marker=dict(size=10, color=color, symbol="square"),
+                name=lbl, showlegend=True))
+
+    # Single Candlestick — continuous time axis, no "undefined" from multiple traces
+    fig.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"],
+        name="Price",
+        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444",
+        showlegend=False))
 
     # ST lines — all green when bull, all red when bear (Nordman style)
     add_st_line(fig, df, "st1", "dir1", "ST1 (7, 3.0)")
@@ -1368,7 +1384,7 @@ is_swing_suitable = ticker in SWING_TRADE_SUITABLE
 # ── HEADER ─────────────────────────────────────────────────────
 
 st.markdown("#### ASX Stock Technical Dashboard")
-APP_VERSION = "v1.0.42"
+APP_VERSION = "v1.0.43"
 st.caption(f"{APP_VERSION} | Swing trade focused analysis | {timeframe} | {date_start.strftime('%d %b %Y')} to {date_end.strftime('%d %b %Y')}")
 st.divider()
 
