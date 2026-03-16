@@ -392,58 +392,6 @@ def triple_supertrend_signals(df):
 # and red (bearish, above price as resistance) — matching the Nordman visual style.
 # No per-ST colour variation.
 
-def add_ohlc_candles(fig, df_in, name="Price", row=None, col=None,
-                     up_color="#22c55e", down_color="#ef4444", showlegend=True):
-    """
-    Draws OHLC candles using go.Bar (bodies) + go.Scatter (wicks).
-    Avoids go.Candlestick entirely — which injects an 'undefined'
-    legend group title in all Plotly versions regardless of Python settings.
-    """
-    d = df_in.copy()
-    is_up   = d["close"] >= d["open"]
-    body_lo = d[["open","close"]].min(axis=1)
-    body_hi = d[["open","close"]].max(axis=1)
-
-    kw = dict(row=row, col=col) if row else {}
-
-    # Bodies
-    for color, mask, lbl in [
-        (up_color,   is_up,  f"{name} Up"),
-        (down_color, ~is_up, f"{name} Down"),
-    ]:
-        sub = d[mask]
-        if sub.empty:
-            continue
-        fig.add_trace(go.Bar(
-            x=sub["time"],
-            y=(body_hi[mask] - body_lo[mask]).values,
-            base=body_lo[mask].values,
-            name=lbl,
-            marker_color=color,
-            marker_line_color=color,
-            marker_line_width=0.5,
-            width=0.5,
-            showlegend=False,
-            hoverinfo="skip",
-        ), **kw)
-
-    # Wicks — one scatter per candle group for performance
-    wick_x, wick_y = [], []
-    for _, row_d in d.iterrows():
-        wick_x += [row_d["time"], row_d["time"], None]
-        wick_y += [row_d["low"],  row_d["high"],  None]
-
-    wick_colors = [up_color if u else down_color for u in is_up]
-    # Single aggregated wick trace per colour would be complex; use one grey trace
-    fig.add_trace(go.Scatter(
-        x=wick_x, y=wick_y,
-        mode="lines",
-        line=dict(color="rgba(150,150,150,0.6)", width=1),
-        name=name if showlegend else None,
-        showlegend=showlegend,
-        hoverinfo="skip",
-    ), **kw)
-
 
 def add_st_line(fig, df, st_col, dir_col, name, bull_color="#00c853", bear_color="#ff1744", width=2):
     """Draw one ST as two traces: green when bullish, red when bearish.
@@ -479,7 +427,11 @@ def add_st_line(fig, df, st_col, dir_col, name, bull_color="#00c853", bear_color
 
 def build_chart1(df):
     fig = go.Figure()
-    add_ohlc_candles(fig, df, name="Price")
+    fig.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"], name="Price",
+        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
 
     add_st_line(fig, df, "st1", "dir1", "ST1 (7, 3.0)")
     add_st_line(fig, df, "st2", "dir2", "ST2 (14, 2.0)")
@@ -504,7 +456,8 @@ def build_chart1(df):
         height=600,
         margin=dict(t=50, b=10),
         xaxis_rangeslider_visible=False,
-        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0,
+                    grouptitlefont=dict(color="rgba(0,0,0,0)")),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)")
     return fig
@@ -572,7 +525,12 @@ def build_chart2(df):
             showlegend=True))
 
     # Single standard Candlestick on top — wicks visible, body transparent
-    add_ohlc_candles(fig, df, name="Price", showlegend=False)
+    fig.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"], name="Price",
+        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444",
+        showlegend=False))
 
     # ST lines — all green when bull, all red when bear (Nordman style)
     add_st_line(fig, df, "st1", "dir1", "ST1 (7, 3.0)")
@@ -648,7 +606,8 @@ def build_chart2(df):
         margin=dict(t=50, b=10),
         xaxis_rangeslider_visible=False,
         xaxis=dict(range=[df["time"].iloc[0], df["time"].iloc[-1]]),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                    grouptitlefont=dict(color="rgba(0,0,0,0)")),
         plot_bgcolor="#0e1117",
         paper_bgcolor="rgba(0,0,0,0)")
     return fig
@@ -776,7 +735,11 @@ def build_chart3(df):
     _add_bg(fig, df, all_bear, "#ef4444")
 
     # Price candles (standard colour — Chart 3 focus is on signals, not candle tinting)
-    add_ohlc_candles(fig, df, name="Price")
+    fig.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"], name="Price",
+        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
 
     # Three ST lines — all green/red, varying line width to distinguish them
     st3_configs = [
@@ -845,7 +808,8 @@ def build_chart3(df):
         height=650,
         margin=dict(t=50, b=10),
         xaxis_rangeslider_visible=False,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                    grouptitlefont=dict(color="rgba(0,0,0,0)")),
         plot_bgcolor="#0e1117",
         paper_bgcolor="rgba(0,0,0,0)")
     return fig
@@ -1713,7 +1677,11 @@ with row1_r:
     elif pd.notna(bb_f):
         status_line("EMA 200 not available — extend date range for EMA cross signal.", "neutral")
     fig_bb = go.Figure()
-    add_ohlc_candles(fig_bb, df, name="Price")
+    fig_bb.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"], name="Price",
+        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
     fig_bb.add_trace(go.Scatter(x=df["time"], y=df["BB_upper"],
         name="BB Upper", line=dict(color="gray", dash="dot", width=1)))
     fig_bb.add_trace(go.Scatter(x=df["time"], y=df["BB_lower"],
@@ -2064,7 +2032,12 @@ if df["RSI"].notna().any() and df["MACD"].notna().any():
         row_heights=[0.5, 0.25, 0.25],
         subplot_titles=("Price", "RSI (14)", "MACD"))
 
-    add_ohlc_candles(fig_div, df, name="Price", row=1, col=1)
+    fig_div.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"], name="Price",
+        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"),
+        row=1, col=1)
 
     # Mark divergence points on price
     for idx, div_type in rsi_divs:
@@ -2188,7 +2161,11 @@ if len(df) >= 52:
         fill="tonexty", fillcolor="rgba(34,197,94,0.15)",
         showlegend=False, hoverinfo="skip"))
 
-    add_ohlc_candles(fig_ichi, df, name="Price")
+    fig_ichi.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"], name="Price",
+        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
 
     fig_ichi.add_trace(go.Scatter(x=df["time"], y=tenkan,
         name="Tenkan (9)", line=dict(color="#f87171", width=1.5)))
@@ -2258,7 +2235,12 @@ if "volume" in df.columns and df["volume"].notna().any():
     fig_obv = make_subplots(rows=2, cols=1, shared_xaxes=True,
                             row_heights=[0.5, 0.5],
                             subplot_titles=("Price", "On Balance Volume"))
-    add_ohlc_candles(fig_obv, df, name="Price", row=1, col=1)
+    fig_obv.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"], name="Price",
+        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"),
+        row=1, col=1)
     fig_obv.add_trace(go.Scatter(x=df["time"], y=obv_series,
         name="OBV", line=dict(color="#60A5FA", width=2)), row=2, col=1)
     fig_obv.add_trace(go.Scatter(x=df["time"], y=obv_ema,
@@ -2337,7 +2319,11 @@ else:
     status_line(f"Price at ${price_now:.4f} — outside current Fibonacci range.", "neutral")
 
 fig_fib = go.Figure()
-add_ohlc_candles(fig_fib, fib_df, name="Price")
+fig_fib.add_trace(go.Candlestick(
+    x=fib_df["time"], open=fib_df["open"], high=fib_df["high"],
+    low=fib_df["low"], close=fib_df["close"], name="Price",
+    increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+    increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
 
 FIB_COLORS = {
     "0%   (High)":      "#9ca3af",
@@ -2467,7 +2453,11 @@ if len(df) >= 10:
     psar_bear_y = psar_vals.where(~psar_bull, other=np.nan)
 
     fig_psar = go.Figure()
-    add_ohlc_candles(fig_psar, df, name="Price")
+    fig_psar.add_trace(go.Candlestick(
+        x=df["time"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"], name="Price",
+        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
     fig_psar.add_trace(go.Scatter(
         x=df["time"], y=psar_bull_y,
         mode="markers", name="SAR Bullish",
