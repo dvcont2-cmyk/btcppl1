@@ -299,7 +299,17 @@ def compute_indicators(df):
 
 
 def compute_supertrend(df, period, multiplier):
-    atr         = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=period).average_true_range()
+    nan_st  = pd.Series(np.nan,  index=df.index)
+    zero_dir = pd.Series(0,      index=df.index, dtype=int)
+    if len(df) <= period:          # not enough bars — return silent NaN
+        return nan_st, zero_dir
+    try:
+        atr = ta.volatility.AverageTrueRange(
+            df["high"], df["low"], df["close"], window=period
+        ).average_true_range()
+    except Exception:
+        return nan_st, zero_dir
+
     hl_avg      = (df["high"] + df["low"]) / 2
     basic_upper = (hl_avg + multiplier * atr).values.copy()
     basic_lower = (hl_avg - multiplier * atr).values.copy()
@@ -580,11 +590,22 @@ def compute_fib_bb(close_series, length=200, mult=2.618):
 
 def compute_chart3_signals(df):
     df = df.copy()
+
+    # All three ST calls are already safe (compute_supertrend returns NaN on failure)
     df["c3_st1"], df["c3_dir1"] = compute_supertrend(df, period=10, multiplier=1.0)
     df["c3_st2"], df["c3_dir2"] = compute_supertrend(df, period=11, multiplier=2.0)
     df["c3_st3"], df["c3_dir3"] = compute_supertrend(df, period=12, multiplier=3.0)
-    df["c3_rsi7"] = ta.momentum.RSIIndicator(df["close"], window=7).rsi()
-    df["c3_fib_basis"], df["c3_fib_upper"], df["c3_fib_lower"] = compute_fib_bb(df["close"])
+
+    try:
+        df["c3_rsi7"] = ta.momentum.RSIIndicator(df["close"], window=7).rsi()
+    except Exception:
+        df["c3_rsi7"] = np.nan
+
+    try:
+        df["c3_fib_basis"], df["c3_fib_upper"], df["c3_fib_lower"] = compute_fib_bb(df["close"])
+    except Exception:
+        df["c3_fib_basis"] = df["c3_fib_upper"] = df["c3_fib_lower"] = np.nan
+
     df["c3_buy"]  = None
     df["c3_sell"] = None
     df["c3_exit"] = None
