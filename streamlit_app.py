@@ -244,25 +244,39 @@ def compute_200w_ma(df_daily):
     df["MA_200w"] = df["close"].rolling(200).mean()
     return df
 
-def inject_long_ema(df, df_long, timeframe):
-    if df_long.empty or len(df_long) < 200:
-        return df
-    df_ema = df_long[["time", "close"]].copy()
-    df_ema["EMA_50"]  = ta.trend.EMAIndicator(df_ema["close"], window=50).ema_indicator()
-    df_ema["EMA_200"] = ta.trend.EMAIndicator(df_ema["close"], window=200).ema_indicator()
-    if timeframe == "Weekly":
-        df_ema = df_ema.set_index("time").resample("W").last().reset_index()
-    df     = df.sort_values("time").reset_index(drop=True)
-    df_ema = df_ema.sort_values("time").reset_index(drop=True)
-    df     = pd.merge_asof(df, df_ema[["time", "EMA_50", "EMA_200"]],
-                           on="time", direction="nearest", suffixes=("_short", "_long"))
-    for col in ["EMA_50", "EMA_200"]:
-        if f"{col}_long" in df.columns:
-            df[col] = df[f"{col}_long"]
-            df.drop(columns=[f"{col}_long"], inplace=True)
-        if f"{col}_short" in df.columns:
-            df.drop(columns=[f"{col}_short"], inplace=True)
-    return df
+def inject_long_ema(df: pd.DataFrame, df_ema: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+    df = df.copy()
+    df_ema = df_ema.copy()
+
+    # Normalise dtypes for the merge key
+    df["time"] = pd.to_datetime(df["time"], utc=False)
+    df_ema["time"] = pd.to_datetime(df_ema["time"], utc=False)
+
+    # Strip timezone if any (handles datetime64[ns, UTC] vs datetime64[ns])
+    try:
+        df["time"] = df["time"].dt.tz_localize(None)
+    except (TypeError, AttributeError):
+        pass
+    try:
+        df_ema["time"] = df_ema["time"].dt.tz_localize(None)
+    except (TypeError, AttributeError):
+        pass
+
+    # merge_asof requires both sides sorted by the key
+    df = df.sort_values("time")
+    df_ema = df_ema.sort_values("time")
+
+    # Keep only the long‑frame EMAs
+    df_ema = df_ema[["time", "EMA_50", "EMA_200"]].dropna(subset=["EMA_50", "EMA_200"])
+
+    merged = pd.merge_asof(
+        df,
+        df_ema,
+        on="time",
+        direction="nearest",
+        suffixes=("_short", "_long"),
+    )
+    return merged
 
 def detect_support_resistance(df, window=3, num_levels=5):
     highs = df["high"] if "high" in df.columns else df["close"]
