@@ -244,6 +244,19 @@ def compute_200w_ma(df_daily):
     df["MA_200w"] = df["close"].rolling(200).mean()
     return df
 
+def _normalise_time(series: pd.Series) -> pd.Series:
+    """Convert any datetime series to naive datetime64[ns] (no timezone)."""
+    s = pd.to_datetime(series, errors="coerce")
+    if hasattr(s.dt, "tz") and s.dt.tz is not None:
+        s = s.dt.tz_convert("UTC").dt.tz_localize(None)
+    else:
+        try:
+            s = s.dt.tz_localize(None)
+        except TypeError:
+            pass
+    return s.astype("datetime64[ns]")
+
+
 def inject_long_ema(df: pd.DataFrame, df_long: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     if df_long.empty:
         return df
@@ -255,25 +268,20 @@ def inject_long_ema(df: pd.DataFrame, df_long: pd.DataFrame, timeframe: str) -> 
     df_long["EMA_50"]  = ta.trend.EMAIndicator(df_long["close"], window=50).ema_indicator()
     df_long["EMA_200"] = ta.trend.EMAIndicator(df_long["close"], window=200).ema_indicator()
 
-    # Normalise the time column dtype so merge_asof doesn't throw MergeError
-    df["time"]      = pd.to_datetime(df["time"]).dt.tz_localize(None)
-    df_long["time"] = pd.to_datetime(df_long["time"]).dt.tz_localize(None)
+    # Normalise time dtype on BOTH frames to naive datetime64[ns]
+    df["time"]      = _normalise_time(df["time"])
+    df_long["time"] = _normalise_time(df_long["time"])
 
-    # merge_asof requires both sides sorted
+    # merge_asof requires both sides sorted by the key
     df      = df.sort_values("time").reset_index(drop=True)
     df_long = df_long.sort_values("time").reset_index(drop=True)
 
-    df_ema = df_long[["time", "EMA_50", "EMA_200"]].dropna(subset=["EMA_50", "EMA_200"])
-
-    # Drop any existing EMA cols on the short frame to avoid _short/_long suffix collisions
+    # Drop any existing EMA cols on the short frame to avoid suffix collisions
     df = df.drop(columns=[c for c in ["EMA_50", "EMA_200"] if c in df.columns])
 
-    merged = pd.merge_asof(
-        df,
-        df_ema,
-        on="time",
-        direction="nearest",
-    )
+    df_ema = df_long[["time", "EMA_50", "EMA_200"]].dropna(subset=["EMA_50", "EMA_200"])
+
+    merged = pd.merge_asof(df, df_ema, on="time", direction="nearest")
     return merged
 
 def detect_support_resistance(df, window=3, num_levels=5):
