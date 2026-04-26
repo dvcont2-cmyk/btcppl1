@@ -245,37 +245,44 @@ def compute_200w_ma(df_daily):
     return df
 
 def inject_long_ema(df: pd.DataFrame, df_long: pd.DataFrame, timeframe: str) -> pd.DataFrame:
-    if df_long.empty:
+    if df_long.empty or df.empty:
         return df
 
     df = df.copy()
     df_long = df_long.copy()
 
-    # Compute EMAs on the long-frame data
-    df_long["EMA_50"]  = ta.trend.EMAIndicator(df_long["close"], window=50).ema_indicator()
-    df_long["EMA_200"] = ta.trend.EMAIndicator(df_long["close"], window=200).ema_indicator()
+    # Compute EMAs on long-frame data
+    df_long["EMA50"] = ta.trend.EMAIndicator(df_long["close"], window=50).ema_indicator()
+    df_long["EMA200"] = ta.trend.EMAIndicator(df_long["close"], window=200).ema_indicator()
 
-    # Normalise the time column dtype so merge_asof doesn't throw MergeError
-    df["time"]      = pd.to_datetime(df["time"]).dt.tz_localize(None)
-    df_long["time"] = pd.to_datetime(df_long["time"]).dt.tz_localize(None)
+    # Hard-normalise both time columns to identical pandas datetime dtype
+    df["time"] = pd.to_datetime(df["time"], errors="coerce", utc=True).dt.tz_convert(None)
+    df_long["time"] = pd.to_datetime(df_long["time"], errors="coerce", utc=True).dt.tz_convert(None)
 
-    # merge_asof requires both sides sorted
-    df      = df.sort_values("time").reset_index(drop=True)
+    # Drop bad rows
+    df = df.dropna(subset=["time"]).copy()
+    df_long = df_long.dropna(subset=["time"]).copy()
+
+    # Sort for merge_asof
+    df = df.sort_values("time").reset_index(drop=True)
     df_long = df_long.sort_values("time").reset_index(drop=True)
 
-    df_ema = df_long[["time", "EMA_50", "EMA_200"]].dropna(subset=["EMA_50", "EMA_200"])
+    # Keep only required EMA columns
+    df_ema = df_long[["time", "EMA50", "EMA200"]].dropna(subset=["EMA50", "EMA200"]).copy()
 
-    # Drop any existing EMA cols on the short frame to avoid _short/_long suffix collisions
-    df = df.drop(columns=[c for c in ["EMA_50", "EMA_200"] if c in df.columns])
+    # Remove any short-frame EMA cols first to avoid duplicate-name collisions
+    df = df.drop(columns=[c for c in ["EMA50", "EMA200"] if c in df.columns], errors="ignore")
+
+    if df_ema.empty:
+        return df
 
     merged = pd.merge_asof(
         df,
         df_ema,
         on="time",
-        direction="nearest",
+        direction="backward",
     )
     return merged
-
 def detect_support_resistance(df, window=3, num_levels=5):
     highs = df["high"] if "high" in df.columns else df["close"]
     lows  = df["low"]  if "low"  in df.columns else df["close"]
