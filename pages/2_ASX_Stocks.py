@@ -621,11 +621,16 @@ def _build_multi_tf_summary_asx(df_daily: pd.DataFrame):
         .dropna()
         .reset_index()
     )
-    if not df_m.empty:
-        df_m = compute_indicators(df_m)
-        df_m = df_m.dropna(subset=["RSI"])
+    # For monthly, ensure we have enough data points for indicators like ADX to work safely
+    if not df_m.empty and len(df_m) >= 6:  # ~6+ months of data
+        try:
+            df_m = compute_indicators(df_m)
+        except IndexError:
+            df_m = pd.DataFrame()
         if not df_m.empty:
-            frames["Monthly"] = df_m
+            df_m = df_m.dropna(subset=["RSI"])
+            if not df_m.empty:
+                frames["Monthly"] = df_m
 
     if not frames:
         return pd.DataFrame(), {}, {}
