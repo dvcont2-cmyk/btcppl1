@@ -245,33 +245,32 @@ def compute_200w_ma(df_daily):
     return df
 
 def inject_long_ema(df: pd.DataFrame, df_long: pd.DataFrame, timeframe: str) -> pd.DataFrame:
-    if df_long.empty or df.empty:
+    if df.empty or df_long.empty:
         return df
 
     df = df.copy()
     df_long = df_long.copy()
 
-    # Compute EMAs on long-frame data
-    df_long["EMA50"] = ta.trend.EMAIndicator(df_long["close"], window=50).ema_indicator()
-    df_long["EMA200"] = ta.trend.EMAIndicator(df_long["close"], window=200).ema_indicator()
+    df_long["EMA_50"] = ta.trend.EMAIndicator(df_long["close"], window=50).ema_indicator()
+    df_long["EMA_200"] = ta.trend.EMAIndicator(df_long["close"], window=200).ema_indicator()
 
-    # Hard-normalise both time columns to identical pandas datetime dtype
-    df["time"] = pd.to_datetime(df["time"], errors="coerce", utc=True).dt.tz_convert(None)
-    df_long["time"] = pd.to_datetime(df_long["time"], errors="coerce", utc=True).dt.tz_convert(None)
+    def _normalise_time(series: pd.Series) -> pd.Series:
+        s = pd.to_datetime(series, errors="coerce", utc=True)
+        s = pd.Series(pd.DatetimeIndex(s.to_numpy(dtype="datetime64[ns]")), index=series.index)
+        return s
 
-    # Drop bad rows
-    df = df.dropna(subset=["time"]).copy()
-    df_long = df_long.dropna(subset=["time"]).copy()
+    df["time"] = _normalise_time(df["time"])
+    df_long["time"] = _normalise_time(df_long["time"])
 
-    # Sort for merge_asof
-    df = df.sort_values("time").reset_index(drop=True)
-    df_long = df_long.sort_values("time").reset_index(drop=True)
+    df = df.dropna(subset=["time"]).sort_values("time").reset_index(drop=True)
+    df_long = df_long.dropna(subset=["time"]).sort_values("time").reset_index(drop=True)
 
-    # Keep only required EMA columns
-    df_ema = df_long[["time", "EMA50", "EMA200"]].dropna(subset=["EMA50", "EMA200"]).copy()
+    df_ema = df_long[["time", "EMA_50", "EMA_200"]].dropna(subset=["time", "EMA_50", "EMA_200"]).copy()
 
-    # Remove any short-frame EMA cols first to avoid duplicate-name collisions
-    df = df.drop(columns=[c for c in ["EMA50", "EMA200"] if c in df.columns], errors="ignore")
+    df["time"] = pd.DatetimeIndex(df["time"].to_numpy(dtype="datetime64[ns]"))
+    df_ema["time"] = pd.DatetimeIndex(df_ema["time"].to_numpy(dtype="datetime64[ns]"))
+
+    df = df.drop(columns=[c for c in ["EMA_50", "EMA_200"] if c in df.columns], errors="ignore")
 
     if df_ema.empty:
         return df
@@ -281,8 +280,10 @@ def inject_long_ema(df: pd.DataFrame, df_long: pd.DataFrame, timeframe: str) -> 
         df_ema,
         on="time",
         direction="backward",
+        allow_exact_matches=True,
     )
     return merged
+    
 def detect_support_resistance(df, window=3, num_levels=5):
     highs = df["high"] if "high" in df.columns else df["close"]
     lows  = df["low"]  if "low"  in df.columns else df["close"]
