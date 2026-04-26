@@ -822,12 +822,6 @@ def render_multi_tf_asx(ticker: str, date_start, date_end, info: dict):
 
     st.caption("Designed for quick mobile screenshots — use colours and labels to gauge alignment across timeframes.")
 
-    if score >= 7:   return "🟢 STRONG BUY"
-    elif score >= 3: return "🟡 WATCH / ACCUMULATE"
-    elif score >= -2:return "⚪ HOLD / NEUTRAL"
-    elif score >= -5:return "🟠 CAUTION / REDUCE"
-    else:            return "🔴 STRONG SELL / AVOID"
-
 
 def swing_trade_commentary(row, df, ticker, price, score, info):
     atr       = row["ATR"] if pd.notna(row["ATR"]) else price * 0.03
