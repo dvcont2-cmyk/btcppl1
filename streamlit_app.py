@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
 import time
+import math
 from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(layout="wide", page_title="Crypto Signal Dashboard")
@@ -485,8 +486,6 @@ def signal_label(score):
 
 # ── MULTI-TIMEFRAME SNAPSHOT (CRYPTO) ─────────────────────────
 
-import math
-
 
 def _format_num(val, decimals=1):
     if val is None or (isinstance(val, float) and (math.isnan(val) or math.isinf(val))):
@@ -661,7 +660,6 @@ def _indicator_color(indicator: str, value: float) -> str:
         if value >= 5:   return "color: #ef4444"
         return "color: #9ca3af"
 
-    # EMA levels: keep neutral grey by default
     return "color: #9ca3af"
 
 
@@ -674,9 +672,8 @@ def render_multi_tf_crypto(df_long: pd.DataFrame, price: float, coin_ticker: str
     st.markdown("### 🧭 Multi-timeframe Indicator Snapshot")
     st.caption("Daily / Weekly / Monthly values for key swing indicators.")
 
-    # Apply color styling based on numeric values
     def _style_column(col: pd.Series) -> list[str]:
-        tf = col.name  # "Daily", "Weekly", "Monthly"
+        tf = col.name
         styles: list[str] = []
         for ind in df_table.index:
             val = numeric_vals.get(ind, {}).get(tf)
@@ -717,6 +714,12 @@ def render_multi_tf_crypto(df_long: pd.DataFrame, price: float, coin_ticker: str
             st.markdown("- Bias: **mixed signals** — timeframes are not fully aligned. Treat swings as shorter-term trades and be more selective with entries and position sizing.")
 
     st.caption("Designed for quick mobile screenshots — table shows raw indicator values; colors and notes summarise swing bias.")
+
+    if score >= 7:    return "🟢 STRONG BUY"
+    elif score >= 3:  return "🟡 DCA BUY ZONE"
+    elif score >= -2: return "⚪ HOLD / WATCH"
+    elif score >= -5: return "🟠 CAUTION / REDUCE"
+    else:             return "🔴 STRONG SELL"
 
 # ── DCA COMMENTARY ─────────────────────────────────────────────
 
