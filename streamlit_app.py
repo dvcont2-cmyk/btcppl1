@@ -273,8 +273,8 @@ def inject_long_ema(df: pd.DataFrame, df_long: pd.DataFrame, timeframe: str) -> 
     df_long["time"] = _normalise_time(df_long["time"])
 
     # Use integer timestamps as merge key to avoid subtle dtype mismatches
-    df["_ts"]      = df["time"].view("int64")
-    df_long["_ts"] = df_long["time"].view("int64")
+    df["_ts"]      = df["time"].astype("int64")
+    df_long["_ts"] = df_long["time"].astype("int64")
 
     # merge_asof requires both sides sorted by the key
     df      = df.sort_values("_ts").reset_index(drop=True)
