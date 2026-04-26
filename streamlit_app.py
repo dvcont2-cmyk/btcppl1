@@ -531,10 +531,10 @@ def _build_multi_tf_summary(df_long: pd.DataFrame):
 
     # Monthly resample from daily
     df_m = (
-        df_long.set_index("time").resample("M")
-        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
-        .dropna()
-        .reset_index()
+    df_long.set_index("time").resample("MS")
+    .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
+    .dropna()
+    .reset_index()
     )
     if not df_m.empty:
         df_m = compute_indicators(df_m)
