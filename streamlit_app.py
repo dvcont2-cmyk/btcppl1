@@ -244,6 +244,19 @@ def compute_200w_ma(df_daily):
     df["MA_200w"] = df["close"].rolling(200).mean()
     return df
 
+def _normalise_time(series: pd.Series) -> pd.Series:
+    """Convert any datetime series to naive datetime64[ns] (no timezone)."""
+    s = pd.to_datetime(series, errors="coerce")
+    if hasattr(s.dt, "tz") and s.dt.tz is not None:
+        s = s.dt.tz_convert("UTC").dt.tz_localize(None)
+    else:
+        try:
+            s = s.dt.tz_localize(None)
+        except TypeError:
+            pass
+    return s.astype("datetime64[ns]")
+
+
 def inject_long_ema(df: pd.DataFrame, df_long: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     if df_long.empty:
         return df
@@ -259,7 +272,7 @@ def inject_long_ema(df: pd.DataFrame, df_long: pd.DataFrame, timeframe: str) -> 
     df["time"]      = _normalise_time(df["time"])
     df_long["time"] = _normalise_time(df_long["time"])
 
-    # Use integer timestamps as merge key to avoid any subtle dtype mismatches
+    # Use integer timestamps as merge key to avoid subtle dtype mismatches
     df["_ts"]      = df["time"].view("int64")
     df_long["_ts"] = df_long["time"].view("int64")
 
@@ -274,10 +287,9 @@ def inject_long_ema(df: pd.DataFrame, df_long: pd.DataFrame, timeframe: str) -> 
 
     merged = pd.merge_asof(df, df_ema, on="_ts", direction="nearest")
 
-    # Clean up helper column
-    merged = merged.drop(columns=["_ts"])  # keep original time column
+    # Clean up helper column, keep original time
+    merged = merged.drop(columns=["_ts"])
     return merged
-
 
 def detect_support_resistance(df, window=3, num_levels=5):
     highs = df["high"] if "high" in df.columns else df["close"]
