@@ -481,12 +481,6 @@ def composite_score(row):
     return net_score, bullish_count, bearish_count, indicators
 
 def signal_label(score):
-    if score >= 7:    return "🟢 STRONG BUY"
-    elif score >= 3:  return "🟡 DCA BUY ZONE"
-    elif score >= -2: return "⚪ HOLD / WATCH"
-    elif score >= -5: return "🟠 CAUTION / REDUCE"
-    else:             return "🔴 STRONG SELL"
-
 
 
 # ── MULTI-TIMEFRAME SNAPSHOT (CRYPTO) ─────────────────────────
@@ -504,11 +498,11 @@ def _format_num(val, decimals=1):
 
 
 def _build_multi_tf_summary(df_long: pd.DataFrame):
-    """Return (table_df, context) for Daily / Weekly / Monthly indicator snapshot."""
+    """Return (df_table_display, numeric_values, ctx) for Daily / Weekly / Monthly."""
     if df_long is None or df_long.empty:
-        return pd.DataFrame(), {}
+        return pd.DataFrame(), {}, {}
 
-    frames = {}
+    frames: dict[str, pd.DataFrame] = {}
 
     # Daily from long-daily series
     df_d = compute_indicators(df_long.copy())
@@ -529,12 +523,12 @@ def _build_multi_tf_summary(df_long: pd.DataFrame):
         if not df_w.empty:
             frames["Weekly"] = df_w
 
-    # Monthly resample from daily
+    # Monthly resample from daily (month start)
     df_m = (
-    df_long.set_index("time").resample("MS")
-    .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
-    .dropna()
-    .reset_index()
+        df_long.set_index("time").resample("MS")
+        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
+        .dropna()
+        .reset_index()
     )
     if not df_m.empty:
         df_m = compute_indicators(df_m)
@@ -543,7 +537,7 @@ def _build_multi_tf_summary(df_long: pd.DataFrame):
             frames["Monthly"] = df_m
 
     if not frames:
-        return pd.DataFrame(), {}
+        return pd.DataFrame(), {}, {}
 
     latest_rows = {name: f.iloc[-1] for name, f in frames.items()}
 
@@ -560,8 +554,9 @@ def _build_multi_tf_summary(df_long: pd.DataFrame):
         "ROC (12)",
     ]
 
-    table = {label: {"Daily": "N/A", "Weekly": "N/A", "Monthly": "N/A"} for label in row_labels}
-    ctx   = {}
+    table_display = {label: {"Daily": "N/A", "Weekly": "N/A", "Monthly": "N/A"} for label in row_labels}
+    numeric_vals   = {label: {"Daily": None, "Weekly": None, "Monthly": None} for label in row_labels}
+    ctx: dict[str, dict] = {}
 
     for tf_name, row in latest_rows.items():
         score, bull_cnt, bear_cnt, inds = composite_score(row)
@@ -571,36 +566,47 @@ def _build_multi_tf_summary(df_long: pd.DataFrame):
             "label": signal_label(score),
         }
 
-        rsi   = row.get("RSI")
-        stoch = row.get("StochRSI_k")
-        macd  = row.get("MACD")
-        bb_pct = row.get("BB_pct")
-        ema50 = row.get("EMA_50")
-        ema200 = row.get("EMA_200")
-        adx   = row.get("ADX")
-        cci   = row.get("CCI")
-        wr    = row.get("WilliamsR")
-        roc   = row.get("ROC")
+        rsi   = float(row.get("RSI")) if pd.notna(row.get("RSI")) else None
+        stoch = float(row.get("StochRSI_k")) if pd.notna(row.get("StochRSI_k")) else None
+        macd  = float(row.get("MACD")) if pd.notna(row.get("MACD")) else None
+        bb_pct = float(row.get("BB_pct")) if pd.notna(row.get("BB_pct")) else None
+        ema50 = float(row.get("EMA_50")) if pd.notna(row.get("EMA_50")) else None
+        ema200 = float(row.get("EMA_200")) if pd.notna(row.get("EMA_200")) else None
+        adx   = float(row.get("ADX")) if pd.notna(row.get("ADX")) else None
+        cci   = float(row.get("CCI")) if pd.notna(row.get("CCI")) else None
+        wr    = float(row.get("WilliamsR")) if pd.notna(row.get("WilliamsR")) else None
+        roc   = float(row.get("ROC")) if pd.notna(row.get("ROC")) else None
 
-        table["RSI (14)"][tf_name]       = _format_num(rsi, 1) if rsi is not None else "N/A"
-        table["Stoch RSI %K"][tf_name]   = _format_num(stoch, 1) if stoch is not None else "N/A"
-        table["MACD"][tf_name]          = _format_num(macd, 2) if macd is not None else "N/A"
-        table["BB %B"][tf_name]         = _format_num(bb_pct * 100, 1) if bb_pct is not None else "N/A"
-        table["EMA 50"][tf_name]        = _format_num(ema50, 2) if ema50 is not None else "N/A"
-        table["EMA 200"][tf_name]       = _format_num(ema200, 2) if ema200 is not None else "N/A"
-        table["ADX (14)"][tf_name]      = _format_num(adx, 1) if adx is not None else "N/A"
-        table["CCI (20)"][tf_name]      = _format_num(cci, 0) if cci is not None else "N/A"
-        table["Williams %R"][tf_name]   = _format_num(wr, 1) if wr is not None else "N/A"
-        table["ROC (12)"][tf_name]      = _format_num(roc, 1) if roc is not None else "N/A"
+        numeric_vals["RSI (14)"][tf_name]      = rsi
+        numeric_vals["Stoch RSI %K"][tf_name]  = stoch
+        numeric_vals["MACD"][tf_name]         = macd
+        numeric_vals["BB %B"][tf_name]        = bb_pct * 100 if bb_pct is not None else None
+        numeric_vals["EMA 50"][tf_name]       = ema50
+        numeric_vals["EMA 200"][tf_name]      = ema200
+        numeric_vals["ADX (14)"][tf_name]     = adx
+        numeric_vals["CCI (20)"][tf_name]     = cci
+        numeric_vals["Williams %R"][tf_name]  = wr
+        numeric_vals["ROC (12)"][tf_name]     = roc
 
-    df_table = pd.DataFrame.from_dict(table, orient="index")
+        table_display["RSI (14)"][tf_name]     = _format_num(rsi, 1) if rsi is not None else "N/A"
+        table_display["Stoch RSI %K"][tf_name] = _format_num(stoch, 1) if stoch is not None else "N/A"
+        table_display["MACD"][tf_name]        = _format_num(macd, 2) if macd is not None else "N/A"
+        table_display["BB %B"][tf_name]       = _format_num(bb_pct * 100, 1) if bb_pct is not None else "N/A"
+        table_display["EMA 50"][tf_name]      = _format_num(ema50, 2) if ema50 is not None else "N/A"
+        table_display["EMA 200"][tf_name]     = _format_num(ema200, 2) if ema200 is not None else "N/A"
+        table_display["ADX (14)"][tf_name]    = _format_num(adx, 1) if adx is not None else "N/A"
+        table_display["CCI (20)"][tf_name]    = _format_num(cci, 0) if cci is not None else "N/A"
+        table_display["Williams %R"][tf_name] = _format_num(wr, 1) if wr is not None else "N/A"
+        table_display["ROC (12)"][tf_name]    = _format_num(roc, 1) if roc is not None else "N/A"
+
+    df_table = pd.DataFrame.from_dict(table_display, orient="index")
     for col in ["Daily", "Weekly", "Monthly"]:
         if col not in df_table.columns:
             df_table[col] = "N/A"
     df_table = df_table[["Daily", "Weekly", "Monthly"]]
     df_table.index.name = "Indicator"
 
-    return df_table, ctx
+    return df_table, numeric_vals, ctx
 
 
 def _describe_bias(score: int) -> str:
@@ -611,15 +617,74 @@ def _describe_bias(score: int) -> str:
     return "neutral"
 
 
+def _indicator_color(indicator: str, value: float) -> str:
+    if value is None or pd.isna(value):
+        return "color: #9ca3af"
+
+    if indicator == "RSI (14)":
+        if value <= 30:  return "color: #22c55e"
+        if value >= 70:  return "color: #ef4444"
+        return "color: #9ca3af"
+
+    if indicator == "Stoch RSI %K":
+        if value <= 20:  return "color: #22c55e"
+        if value >= 80:  return "color: #ef4444"
+        return "color: #9ca3af"
+
+    if indicator == "MACD":
+        if value <= -0.5: return "color: #22c55e"
+        if value >= 0.5:  return "color: #ef4444"
+        return "color: #9ca3af"
+
+    if indicator == "BB %B":
+        if value <= 20:  return "color: #22c55e"
+        if value >= 80:  return "color: #ef4444"
+        return "color: #9ca3af"
+
+    if indicator == "ADX (14)":
+        if value <= 15:  return "color: #22c55e"
+        if value >= 35:  return "color: #ef4444"
+        return "color: #9ca3af"
+
+    if indicator == "CCI (20)":
+        if value <= -100: return "color: #22c55e"
+        if value >= 100:  return "color: #ef4444"
+        return "color: #9ca3af"
+
+    if indicator == "Williams %R":
+        if value <= -80: return "color: #22c55e"
+        if value >= -20: return "color: #ef4444"
+        return "color: #9ca3af"
+
+    if indicator == "ROC (12)":
+        if value <= -5:  return "color: #22c55e"
+        if value >= 5:   return "color: #ef4444"
+        return "color: #9ca3af"
+
+    # EMA levels: keep neutral grey by default
+    return "color: #9ca3af"
+
+
 def render_multi_tf_crypto(df_long: pd.DataFrame, price: float, coin_ticker: str):
-    df_table, ctx = _build_multi_tf_summary(df_long)
+    df_table, numeric_vals, ctx = _build_multi_tf_summary(df_long)
     if df_table.empty or not ctx:
         st.info("Not enough long-term data for multi-timeframe view yet.")
         return
 
     st.markdown("### 🧭 Multi-timeframe Indicator Snapshot")
     st.caption("Daily / Weekly / Monthly values for key swing indicators.")
-    st.table(df_table)
+
+    # Apply color styling based on numeric values
+    def _style_column(col: pd.Series) -> list[str]:
+        tf = col.name  # "Daily", "Weekly", "Monthly"
+        styles: list[str] = []
+        for ind in df_table.index:
+            val = numeric_vals.get(ind, {}).get(tf)
+            styles.append(_indicator_color(ind, val))
+        return styles
+
+    styled = df_table.style.apply(_style_column, axis=0)
+    st.table(styled)
 
     st.markdown("### 🧠 Swing Trade View")
 
@@ -651,7 +716,7 @@ def render_multi_tf_crypto(df_long: pd.DataFrame, price: float, coin_ticker: str
         else:
             st.markdown("- Bias: **mixed signals** — timeframes are not fully aligned. Treat swings as shorter-term trades and be more selective with entries and position sizing.")
 
-    st.caption("Designed for quick mobile screenshots — table shows raw indicator values; notes summarise preferred swing bias and entry style.")
+    st.caption("Designed for quick mobile screenshots — table shows raw indicator values; colors and notes summarise swing bias.")
 
 # ── DCA COMMENTARY ─────────────────────────────────────────────
 
