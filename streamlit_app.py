@@ -6,7 +6,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
 import time
-import math
 from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(layout="wide", page_title="Crypto Signal Dashboard")
@@ -53,7 +52,6 @@ CRYPTOCOMPARE_SYMBOLS = {
 st.sidebar.header("⚙️ Settings")
 coin_label = st.sidebar.selectbox("Select Coin", list(COINS.keys()))
 coin_id, coin_ticker, coin_logo = COINS[coin_label]
-view_mode = st.sidebar.radio("View", ["Dashboard", "Multi-timeframe – Crypto"], index=0)
 timeframe = st.sidebar.radio("Timeframe", ["Daily", "Weekly"])
 days = 365 if timeframe == "Weekly" else 180
 
@@ -246,19 +244,6 @@ def compute_200w_ma(df_daily):
     df["MA_200w"] = df["close"].rolling(200).mean()
     return df
 
-def _normalise_time(series: pd.Series) -> pd.Series:
-    """Convert any datetime series to naive datetime64[ns] (no timezone)."""
-    s = pd.to_datetime(series, errors="coerce")
-    if hasattr(s.dt, "tz") and s.dt.tz is not None:
-        s = s.dt.tz_convert("UTC").dt.tz_localize(None)
-    else:
-        try:
-            s = s.dt.tz_localize(None)
-        except TypeError:
-            pass
-    return s.astype("datetime64[ns]")
-
-
 def inject_long_ema(df: pd.DataFrame, df_long: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     if df_long.empty:
         return df
@@ -270,27 +255,25 @@ def inject_long_ema(df: pd.DataFrame, df_long: pd.DataFrame, timeframe: str) -> 
     df_long["EMA_50"]  = ta.trend.EMAIndicator(df_long["close"], window=50).ema_indicator()
     df_long["EMA_200"] = ta.trend.EMAIndicator(df_long["close"], window=200).ema_indicator()
 
-    # Normalise time dtype on BOTH frames to naive datetime64[ns]
-    df["time"]      = _normalise_time(df["time"])
-    df_long["time"] = _normalise_time(df_long["time"])
+    # Normalise the time column dtype so merge_asof doesn't throw MergeError
+    df["time"]      = pd.to_datetime(df["time"]).dt.tz_localize(None)
+    df_long["time"] = pd.to_datetime(df_long["time"]).dt.tz_localize(None)
 
-    # Use integer timestamps as merge key to avoid subtle dtype mismatches
-    df["_ts"]      = df["time"].astype("int64")
-    df_long["_ts"] = df_long["time"].astype("int64")
+    # merge_asof requires both sides sorted
+    df      = df.sort_values("time").reset_index(drop=True)
+    df_long = df_long.sort_values("time").reset_index(drop=True)
 
-    # merge_asof requires both sides sorted by the key
-    df      = df.sort_values("_ts").reset_index(drop=True)
-    df_long = df_long.sort_values("_ts").reset_index(drop=True)
+    df_ema = df_long[["time", "EMA_50", "EMA_200"]].dropna(subset=["EMA_50", "EMA_200"])
 
-    # Drop any existing EMA cols on the short frame to avoid suffix collisions
+    # Drop any existing EMA cols on the short frame to avoid _short/_long suffix collisions
     df = df.drop(columns=[c for c in ["EMA_50", "EMA_200"] if c in df.columns])
 
-    df_ema = df_long[["_ts", "EMA_50", "EMA_200"]].dropna(subset=["EMA_50", "EMA_200"])
-
-    merged = pd.merge_asof(df, df_ema, on="_ts", direction="nearest")
-
-    # Clean up helper column, keep original time
-    merged = merged.drop(columns=["_ts"])
+    merged = pd.merge_asof(
+        df,
+        df_ema,
+        on="time",
+        direction="nearest",
+    )
     return merged
 
 def detect_support_resistance(df, window=3, num_levels=5):
@@ -487,235 +470,6 @@ def signal_label(score):
     elif score >= -2: return "⚪ HOLD / WATCH"
     elif score >= -5: return "🟠 CAUTION / REDUCE"
     else:             return "🔴 STRONG SELL"
-
-
-# ── MULTI-TIMEFRAME SNAPSHOT (CRYPTO) ─────────────────────────
-
-
-def _format_num(val, decimals=1):
-    if val is None or (isinstance(val, float) and (math.isnan(val) or math.isinf(val))):
-        return "N/A"
-    try:
-        return f"{val:.{decimals}f}"
-    except Exception:
-        return "N/A"
-
-
-def _build_multi_tf_summary(df_long: pd.DataFrame):
-    """Return (df_table_display, numeric_values, ctx) for Daily / Weekly / Monthly."""
-    if df_long is None or df_long.empty:
-        return pd.DataFrame(), {}, {}
-
-    frames: dict[str, pd.DataFrame] = {}
-
-    df_d = compute_indicators(df_long.copy())
-    df_d = df_d.dropna(subset=["RSI"])
-    if not df_d.empty:
-        frames["Daily"] = df_d
-
-    df_w = (
-        df_long.set_index("time").resample("W")
-        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
-        .dropna()
-        .reset_index()
-    )
-    if not df_w.empty:
-        df_w = compute_indicators(df_w)
-        df_w = df_w.dropna(subset=["RSI"])
-        if not df_w.empty:
-            frames["Weekly"] = df_w
-
-    df_m = (
-        df_long.set_index("time").resample("MS")
-        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
-        .dropna()
-        .reset_index()
-    )
-    if not df_m.empty:
-        df_m = compute_indicators(df_m)
-        df_m = df_m.dropna(subset=["RSI"])
-        if not df_m.empty:
-            frames["Monthly"] = df_m
-
-    if not frames:
-        return pd.DataFrame(), {}, {}
-
-    latest_rows = {name: f.iloc[-1] for name, f in frames.items()}
-
-    row_labels = [
-        "RSI (14)",
-        "Stoch RSI %K",
-        "MACD",
-        "BB %B",
-        "EMA 50",
-        "EMA 200",
-        "ADX (14)",
-        "CCI (20)",
-        "Williams %R",
-        "ROC (12)",
-    ]
-
-    table_display = {label: {"Daily": "N/A", "Weekly": "N/A", "Monthly": "N/A"} for label in row_labels}
-    numeric_vals   = {label: {"Daily": None, "Weekly": None, "Monthly": None} for label in row_labels}
-    ctx: dict[str, dict] = {}
-
-    for tf_name, row in latest_rows.items():
-        score, bull_cnt, bear_cnt, inds = composite_score(row)
-        ctx[tf_name] = {
-            "row": row,
-            "score": score,
-            "label": signal_label(score),
-        }
-
-        rsi   = float(row.get("RSI")) if pd.notna(row.get("RSI")) else None
-        stoch = float(row.get("StochRSI_k")) if pd.notna(row.get("StochRSI_k")) else None
-        macd  = float(row.get("MACD")) if pd.notna(row.get("MACD")) else None
-        bb_pct = float(row.get("BB_pct")) if pd.notna(row.get("BB_pct")) else None
-        ema50 = float(row.get("EMA_50")) if pd.notna(row.get("EMA_50")) else None
-        ema200 = float(row.get("EMA_200")) if pd.notna(row.get("EMA_200")) else None
-        adx   = float(row.get("ADX")) if pd.notna(row.get("ADX")) else None
-        cci   = float(row.get("CCI")) if pd.notna(row.get("CCI")) else None
-        wr    = float(row.get("WilliamsR")) if pd.notna(row.get("WilliamsR")) else None
-        roc   = float(row.get("ROC")) if pd.notna(row.get("ROC")) else None
-
-        numeric_vals["RSI (14)"][tf_name]      = rsi
-        numeric_vals["Stoch RSI %K"][tf_name]  = stoch
-        numeric_vals["MACD"][tf_name]         = macd
-        numeric_vals["BB %B"][tf_name]        = bb_pct * 100 if bb_pct is not None else None
-        numeric_vals["EMA 50"][tf_name]       = ema50
-        numeric_vals["EMA 200"][tf_name]      = ema200
-        numeric_vals["ADX (14)"][tf_name]     = adx
-        numeric_vals["CCI (20)"][tf_name]     = cci
-        numeric_vals["Williams %R"][tf_name]  = wr
-        numeric_vals["ROC (12)"][tf_name]     = roc
-
-        table_display["RSI (14)"][tf_name]     = _format_num(rsi, 1) if rsi is not None else "N/A"
-        table_display["Stoch RSI %K"][tf_name] = _format_num(stoch, 1) if stoch is not None else "N/A"
-        table_display["MACD"][tf_name]        = _format_num(macd, 2) if macd is not None else "N/A"
-        table_display["BB %B"][tf_name]       = _format_num(bb_pct * 100, 1) if bb_pct is not None else "N/A"
-        table_display["EMA 50"][tf_name]      = _format_num(ema50, 2) if ema50 is not None else "N/A"
-        table_display["EMA 200"][tf_name]     = _format_num(ema200, 2) if ema200 is not None else "N/A"
-        table_display["ADX (14)"][tf_name]    = _format_num(adx, 1) if adx is not None else "N/A"
-        table_display["CCI (20)"][tf_name]    = _format_num(cci, 0) if cci is not None else "N/A"
-        table_display["Williams %R"][tf_name] = _format_num(wr, 1) if wr is not None else "N/A"
-        table_display["ROC (12)"][tf_name]    = _format_num(roc, 1) if roc is not None else "N/A"
-
-    df_table = pd.DataFrame.from_dict(table_display, orient="index")
-    for col in ["Daily", "Weekly", "Monthly"]:
-        if col not in df_table.columns:
-            df_table[col] = "N/A"
-    df_table = df_table[["Daily", "Weekly", "Monthly"]]
-    df_table.index.name = "Indicator"
-
-    return df_table, numeric_vals, ctx
-
-
-def _describe_bias(score: int) -> str:
-    if score >= 3:
-        return "bullish"
-    if score <= -3:
-        return "bearish"
-    return "neutral"
-
-
-def _indicator_color(indicator: str, value: float) -> str:
-    if value is None or pd.isna(value):
-        return "color: #9ca3af"
-
-    if indicator == "RSI (14)":
-        if value <= 30:  return "color: #22c55e"
-        if value >= 70:  return "color: #ef4444"
-        return "color: #9ca3af"
-
-    if indicator == "Stoch RSI %K":
-        if value <= 20:  return "color: #22c55e"
-        if value >= 80:  return "color: #ef4444"
-        return "color: #9ca3af"
-
-    if indicator == "MACD":
-        if value <= -0.5: return "color: #22c55e"
-        if value >= 0.5:  return "color: #ef4444"
-        return "color: #9ca3af"
-
-    if indicator == "BB %B":
-        if value <= 20:  return "color: #22c55e"
-        if value >= 80:  return "color: #ef4444"
-        return "color: #9ca3af"
-
-    if indicator == "ADX (14)":
-        if value <= 15:  return "color: #22c55e"
-        if value >= 35:  return "color: #ef4444"
-        return "color: #9ca3af"
-
-    if indicator == "CCI (20)":
-        if value <= -100: return "color: #22c55e"
-        if value >= 100:  return "color: #ef4444"
-        return "color: #9ca3af"
-
-    if indicator == "Williams %R":
-        if value <= -80: return "color: #22c55e"
-        if value >= -20: return "color: #ef4444"
-        return "color: #9ca3af"
-
-    if indicator == "ROC (12)":
-        if value <= -5:  return "color: #22c55e"
-        if value >= 5:   return "color: #ef4444"
-        return "color: #9ca3af"
-
-    return "color: #9ca3af"
-
-
-def render_multi_tf_crypto(df_long: pd.DataFrame, price: float, coin_ticker: str):
-    df_table, numeric_vals, ctx = _build_multi_tf_summary(df_long)
-    if df_table.empty or not ctx:
-        st.info("Not enough long-term data for multi-timeframe view yet.")
-        return
-
-    st.markdown("### 🧭 Multi-timeframe Indicator Snapshot")
-    st.caption("Daily / Weekly / Monthly values for key swing indicators.")
-
-    def _style_column(col: pd.Series) -> list[str]:
-        tf = col.name
-        styles: list[str] = []
-        for ind in df_table.index:
-            val = numeric_vals.get(ind, {}).get(tf)
-            styles.append(_indicator_color(ind, val))
-        return styles
-
-    styled = df_table.style.apply(_style_column, axis=0)
-    st.table(styled)
-
-    st.markdown("### 🧠 Swing Trade View")
-
-    d = ctx.get("Daily")
-    w = ctx.get("Weekly")
-    m = ctx.get("Monthly")
-
-    if d:
-        st.markdown(f"**Daily:** {d['label']}")
-    if w:
-        st.markdown(f"**Weekly:** {w['label']}")
-    if m:
-        st.markdown(f"**Monthly:** {m['label']}")
-
-    if d and w and m:
-        daily_bias   = _describe_bias(d["score"])
-        weekly_bias  = _describe_bias(w["score"])
-        monthly_bias = _describe_bias(m["score"])
-
-        if daily_bias == weekly_bias == "bullish" and monthly_bias != "bearish":
-            st.markdown("- Bias: **trend-following longs** — Daily and Weekly are aligned bullish while Monthly is at least neutral.")
-            st.markdown("- Setup: Look for pullbacks on the Daily chart into prior support or the EMA 50/200 zone for swing entries, with stops below recent swing lows.")
-        elif daily_bias == "bullish" and weekly_bias != "bullish" and monthly_bias == "bearish":
-            st.markdown("- Bias: **short-term counter-trend long** — Daily strength against a weak higher timeframe.")
-            st.markdown("- Setup: Aggressive swings only; favour taking profits quickly as price approaches Weekly resistance or major moving averages on the higher timeframes.")
-        elif daily_bias == weekly_bias == "bearish":
-            st.markdown("- Bias: **trend-following shorts or stay flat** — Daily and Weekly both bearish.")
-            st.markdown("- Setup: Best opportunities are bounces into resistance (prior highs / EMA 50) for low-risk short entries, with tight stops above recent swing highs.")
-        else:
-            st.markdown("- Bias: **mixed signals** — timeframes are not fully aligned. Treat swings as shorter-term trades and be more selective with entries and position sizing.")
-
-    st.caption("Designed for quick mobile screenshots — table shows raw indicator values; colors and notes summarise swing bias.")
 
 # ── DCA COMMENTARY ─────────────────────────────────────────────
 
@@ -1063,11 +817,6 @@ if market.get("volume_24h"): v1.metric("💹 24h Volume", f"${market['volume_24h
 if market.get("market_cap"): v2.metric("🏦 Market Cap", f"${market['market_cap']/1e9:.1f}B")
 st.caption(f"⏱ Last updated: {ts} · Indicators: 10 min · Long-term data: daily")
 
-# Switch into multi-timeframe page if selected
-if view_mode == "Multi-timeframe – Crypto":
-    render_multi_tf_crypto(df_long, price, coin_ticker)
-    st.stop()
-
 st.divider()
 
 # ── DCA COMMENTARY ────────────────────────────────────────────
@@ -1396,6 +1145,56 @@ with row6_l:
     else:
         st.info("Not enough BTC history for Pi Cycle.")
     st.caption("When 111-day MA crosses above 2× 350-day MA = historical BTC cycle top. SELL signal only.")
+
+    st.markdown("#### 🧱 Bear Market Support / Resistance Band (BTC)")
+    if not df_btc_long.empty and len(df_btc_long) >= 200:
+        df_w_band = (
+            df_btc_long.set_index("time").resample("W")
+            .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
+            .dropna()
+            .reset_index()
+        )
+        df_w_band["SMA_20w"] = df_w_band["close"].rolling(20).mean()
+        df_w_band["EMA_21w"] = df_w_band["close"].ewm(span=21, adjust=False).mean()
+        df_w_band_valid = df_w_band.dropna(subset=["SMA_20w", "EMA_21w"])
+        if not df_w_band_valid.empty:
+            fig_band = go.Figure()
+            fig_band.add_trace(go.Candlestick(
+                x=df_w_band["time"],
+                open=df_w_band["open"], high=df_w_band["high"],
+                low=df_w_band["low"], close=df_w_band["close"],
+                name="BTC Weekly"
+            ))
+            fig_band.add_trace(go.Scatter(
+                x=df_w_band_valid["time"], y=df_w_band_valid["SMA_20w"],
+                name="20W SMA",
+                line=dict(color="#60A5FA", width=2)
+            ))
+            fig_band.add_trace(go.Scatter(
+                x=df_w_band_valid["time"], y=df_w_band_valid["EMA_21w"],
+                name="21W EMA",
+                line=dict(color="#F97316", width=2),
+                fill="tonexty",
+                fillcolor="rgba(96,165,250,0.18)"
+            ))
+            fig_band.update_layout(
+                height=400,
+                margin=dict(t=30, b=10),
+                xaxis_rangeslider_visible=False,
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)"
+            )
+            st.plotly_chart(fig_band, use_container_width=True)
+            last_row = df_w_band_valid.iloc[-1]
+            band_mid = (last_row["SMA_20w"] + last_row["EMA_21w"]) / 2
+            pct_off  = ((last_row["close"] - band_mid) / band_mid) * 100
+            dir_txt  = "above" if pct_off > 0 else "below"
+            st.markdown(
+                f"BTC weekly close is **{abs(pct_off):.1f}% {dir_txt}** the 20W/21W band midpoint. "
+                "Above = band tends to act as support in bull markets; below = resistance in bear markets."
+            )
+    else:
+        st.info("Not enough BTC history for 20W/21W support band.")
 
 with row6_r:
     st.markdown("#### 📅 200-Week MA (BTC Bear Market Floor)")
