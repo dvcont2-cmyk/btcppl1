@@ -482,6 +482,11 @@ def composite_score(row):
     return net_score, bullish_count, bearish_count, indicators
 
 def signal_label(score):
+    if score >= 7:    return "🟢 STRONG BUY"
+    elif score >= 3:  return "🟡 DCA BUY ZONE"
+    elif score >= -2: return "⚪ HOLD / WATCH"
+    elif score >= -5: return "🟠 CAUTION / REDUCE"
+    else:             return "🔴 STRONG SELL"
 
 
 # ── MULTI-TIMEFRAME SNAPSHOT (CRYPTO) ─────────────────────────
@@ -503,13 +508,11 @@ def _build_multi_tf_summary(df_long: pd.DataFrame):
 
     frames: dict[str, pd.DataFrame] = {}
 
-    # Daily from long-daily series
     df_d = compute_indicators(df_long.copy())
     df_d = df_d.dropna(subset=["RSI"])
     if not df_d.empty:
         frames["Daily"] = df_d
 
-    # Weekly resample from daily
     df_w = (
         df_long.set_index("time").resample("W")
         .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
@@ -522,7 +525,6 @@ def _build_multi_tf_summary(df_long: pd.DataFrame):
         if not df_w.empty:
             frames["Weekly"] = df_w
 
-    # Monthly resample from daily (month start)
     df_m = (
         df_long.set_index("time").resample("MS")
         .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
@@ -714,12 +716,6 @@ def render_multi_tf_crypto(df_long: pd.DataFrame, price: float, coin_ticker: str
             st.markdown("- Bias: **mixed signals** — timeframes are not fully aligned. Treat swings as shorter-term trades and be more selective with entries and position sizing.")
 
     st.caption("Designed for quick mobile screenshots — table shows raw indicator values; colors and notes summarise swing bias.")
-
-    if score >= 7:    return "🟢 STRONG BUY"
-    elif score >= 3:  return "🟡 DCA BUY ZONE"
-    elif score >= -2: return "⚪ HOLD / WATCH"
-    elif score >= -5: return "🟠 CAUTION / REDUCE"
-    else:             return "🔴 STRONG SELL"
 
 # ── DCA COMMENTARY ─────────────────────────────────────────────
 
