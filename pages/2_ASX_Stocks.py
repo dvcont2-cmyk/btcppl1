@@ -569,6 +569,11 @@ def composite_score(row):
 
 
 def signal_label(score):
+    if score >= 7:   return "🟢 STRONG BUY"
+    elif score >= 3: return "🟡 WATCH / ACCUMULATE"
+    elif score >= -2:return "⚪ HOLD / NEUTRAL"
+    elif score >= -5:return "🟠 CAUTION / REDUCE"
+    else:            return "🔴 STRONG SELL / AVOID"
 
 
 # ── MULTI-TIMEFRAME SNAPSHOT (ASX) ─────────────────────────────
