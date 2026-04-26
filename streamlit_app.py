@@ -52,6 +52,7 @@ CRYPTOCOMPARE_SYMBOLS = {
 st.sidebar.header("⚙️ Settings")
 coin_label = st.sidebar.selectbox("Select Coin", list(COINS.keys()))
 coin_id, coin_ticker, coin_logo = COINS[coin_label]
+view_mode = st.sidebar.radio("View", ["Dashboard", "Multi-timeframe – Crypto"], index=0)
 timeframe = st.sidebar.radio("Timeframe", ["Daily", "Weekly"])
 days = 365 if timeframe == "Weekly" else 180
 
@@ -244,19 +245,6 @@ def compute_200w_ma(df_daily):
     df["MA_200w"] = df["close"].rolling(200).mean()
     return df
 
-def _normalise_time(series: pd.Series) -> pd.Series:
-    """Convert any datetime series to naive datetime64[ns] (no timezone)."""
-    s = pd.to_datetime(series, errors="coerce")
-    if hasattr(s.dt, "tz") and s.dt.tz is not None:
-        s = s.dt.tz_convert("UTC").dt.tz_localize(None)
-    else:
-        try:
-            s = s.dt.tz_localize(None)
-        except TypeError:
-            pass
-    return s.astype("datetime64[ns]")
-
-
 def inject_long_ema(df: pd.DataFrame, df_long: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     if df_long.empty:
         return df
@@ -268,20 +256,25 @@ def inject_long_ema(df: pd.DataFrame, df_long: pd.DataFrame, timeframe: str) -> 
     df_long["EMA_50"]  = ta.trend.EMAIndicator(df_long["close"], window=50).ema_indicator()
     df_long["EMA_200"] = ta.trend.EMAIndicator(df_long["close"], window=200).ema_indicator()
 
-    # Normalise time dtype on BOTH frames to naive datetime64[ns]
-    df["time"]      = _normalise_time(df["time"])
-    df_long["time"] = _normalise_time(df_long["time"])
+    # Normalise the time column dtype so merge_asof doesn't throw MergeError
+    df["time"]      = pd.to_datetime(df["time"]).dt.tz_localize(None)
+    df_long["time"] = pd.to_datetime(df_long["time"]).dt.tz_localize(None)
 
-    # merge_asof requires both sides sorted by the key
+    # merge_asof requires both sides sorted
     df      = df.sort_values("time").reset_index(drop=True)
     df_long = df_long.sort_values("time").reset_index(drop=True)
 
-    # Drop any existing EMA cols on the short frame to avoid suffix collisions
-    df = df.drop(columns=[c for c in ["EMA_50", "EMA_200"] if c in df.columns])
-
     df_ema = df_long[["time", "EMA_50", "EMA_200"]].dropna(subset=["EMA_50", "EMA_200"])
 
-    merged = pd.merge_asof(df, df_ema, on="time", direction="nearest")
+    # Drop any existing EMA cols on the short frame to avoid _short/_long suffix collisions
+    df = df.drop(columns=[c for c in ["EMA_50", "EMA_200"] if c in df.columns])
+
+    merged = pd.merge_asof(
+        df,
+        df_ema,
+        on="time",
+        direction="nearest",
+    )
     return merged
 
 def detect_support_resistance(df, window=3, num_levels=5):
@@ -478,6 +471,196 @@ def signal_label(score):
     elif score >= -2: return "⚪ HOLD / WATCH"
     elif score >= -5: return "🟠 CAUTION / REDUCE"
     else:             return "🔴 STRONG SELL"
+
+
+# ── MULTI-TIMEFRAME SNAPSHOT (CRYPTO) ─────────────────────────
+
+import math
+
+
+def _format_num(val, decimals=1):
+    if val is None or (isinstance(val, float) and (math.isnan(val) or math.isinf(val))):
+        return "N/A"
+    try:
+        return f"{val:.{decimals}f}"
+    except Exception:
+        return "N/A"
+
+
+def _build_multi_tf_summary(df_long: pd.DataFrame):
+    """Return (table_df, context) for Daily / Weekly / Monthly indicator snapshot."""
+    if df_long is None or df_long.empty:
+        return pd.DataFrame(), {}
+
+    frames = {}
+
+    # Daily from long-daily series
+    df_d = compute_indicators(df_long.copy())
+    df_d = df_d.dropna(subset=["RSI"])
+    if not df_d.empty:
+        frames["Daily"] = df_d
+
+    # Weekly resample from daily
+    df_w = (
+        df_long.set_index("time").resample("W")
+        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
+        .dropna()
+        .reset_index()
+    )
+    if not df_w.empty:
+        df_w = compute_indicators(df_w)
+        df_w = df_w.dropna(subset=["RSI"])
+        if not df_w.empty:
+            frames["Weekly"] = df_w
+
+    # Monthly resample from daily
+    df_m = (
+        df_long.set_index("time").resample("M")
+        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
+        .dropna()
+        .reset_index()
+    )
+    if not df_m.empty:
+        df_m = compute_indicators(df_m)
+        df_m = df_m.dropna(subset=["RSI"])
+        if not df_m.empty:
+            frames["Monthly"] = df_m
+
+    if not frames:
+        return pd.DataFrame(), {}
+
+    latest_rows = {name: f.iloc[-1] for name, f in frames.items()}
+
+    # Build numeric table for 10 key indicators
+    row_labels = [
+        "RSI (14)",
+        "Stoch RSI %K",
+        "MACD",
+        "BB %B",
+        "EMA 50",
+        "EMA 200",
+        "ADX (14)",
+        "CCI (20)",
+        "Williams %R",
+        "ROC (12)",
+    ]
+
+    table = {label: {"Daily": "N/A", "Weekly": "N/A", "Monthly": "N/A"} for label in row_labels}
+    ctx   = {}
+
+    for tf_name, row in latest_rows.items():
+        score, bull_cnt, bear_cnt, inds = composite_score(row)
+        ctx[tf_name] = {
+            "row": row,
+            "score": score,
+            "label": signal_label(score),
+        }
+
+        rsi   = row.get("RSI")
+        stoch = row.get("StochRSI_k")
+        macd  = row.get("MACD")
+        bb_pct = row.get("BB_pct")
+        ema50 = row.get("EMA_50")
+        ema200 = row.get("EMA_200")
+        adx   = row.get("ADX")
+        cci   = row.get("CCI")
+        wr    = row.get("WilliamsR")
+        roc   = row.get("ROC")
+
+        table["RSI (14)"][tf_name]       = _format_num(rsi, 1) if rsi is not None else "N/A"
+        table["Stoch RSI %K"][tf_name]   = _format_num(stoch, 1) if stoch is not None else "N/A"
+        table["MACD"][tf_name]          = _format_num(macd, 2) if macd is not None else "N/A"
+        table["BB %B"][tf_name]         = _format_num(bb_pct * 100, 1) if bb_pct is not None else "N/A"
+        table["EMA 50"][tf_name]        = _format_num(ema50, 2) if ema50 is not None else "N/A"
+        table["EMA 200"][tf_name]       = _format_num(ema200, 2) if ema200 is not None else "N/A"
+        table["ADX (14)"][tf_name]      = _format_num(adx, 1) if adx is not None else "N/A"
+        table["CCI (20)"][tf_name]      = _format_num(cci, 0) if cci is not None else "N/A"
+        table["Williams %R"][tf_name]   = _format_num(wr, 1) if wr is not None else "N/A"
+        table["ROC (12)"][tf_name]      = _format_num(roc, 1) if roc is not None else "N/A"
+
+    df_table = pd.DataFrame.from_dict(table, orient="index")
+    # Ensure consistent column ordering
+    for col in ["Daily", "Weekly", "Monthly"]:
+        if col not in df_table.columns:
+            df_table[col] = "N/A"
+    df_table = df_table[["Daily", "Weekly", "Monthly"]]
+    df_table.index.name = "Indicator"
+
+    return df_table, ctx
+
+
+def _describe_bias(score: int) -> str:
+    if score >= 3:
+        return "bullish"
+    if score <= -3:
+        return "bearish"
+    return "neutral"
+
+
+def render_multi_tf_crypto(df_long: pd.DataFrame, price: float, coin_ticker: str):
+    df_table, ctx = _build_multi_tf_summary(df_long)
+    if df_table.empty or not ctx:
+        st.info("Not enough long-term data for multi-timeframe view yet.")
+        return
+
+    st.markdown("### 🧭 Multi-timeframe Indicator Snapshot")
+    st.caption("Daily / Weekly / Monthly values for key swing indicators.")
+    st.table(df_table)
+
+    # ---- Under-table swing-trade commentary ----
+    st.markdown("### 🧠 Swing Trade View")
+
+    d = ctx.get("Daily")
+    w = ctx.get("Weekly")
+    m = ctx.get("Monthly")
+
+    if d:
+        st.markdown(f"**Daily:** {d['label']}")
+    if w:
+        st.markdown(f"**Weekly:** {w['label']}")
+    if m:
+        st.markdown(f"**Monthly:** {m['label']}")
+
+    if d and w and m:
+        daily_bias   = _describe_bias(d["score"])
+        weekly_bias  = _describe_bias(w["score"])
+        monthly_bias = _describe_bias(m["score"])
+
+        if daily_bias == weekly_bias == "bullish" and monthly_bias != "bearish":
+            st.markdown(
+                "- Bias: **trend-following longs** — Daily and Weekly are aligned bullish while Monthly is at least neutral."
+            )
+            st.markdown(
+                "- Setup: Look for pullbacks on the Daily chart into prior support or the EMA 50/200 zone for swing entries, "
+                "with stops below recent swing lows."
+            )
+        elif daily_bias == "bullish" and weekly_bias != "bullish" and monthly_bias == "bearish":
+            st.markdown(
+                "- Bias: **short-term counter-trend long** — Daily strength against a weak higher timeframe."
+            )
+            st.markdown(
+                "- Setup: Aggressive swings only; favour taking profits quickly as price approaches Weekly resistance or "
+                "major moving averages on the higher timeframes."
+            )
+        elif daily_bias == weekly_bias == "bearish":
+            st.markdown(
+                "- Bias: **trend-following shorts or stay flat** — Daily and Weekly both bearish."
+            )
+            st.markdown(
+                "- Setup: Best opportunities are bounces into resistance (prior highs / EMA 50) for low-risk short entries, "
+                "with tight stops above recent swing highs."
+            )
+        else:
+            st.markdown(
+                "- Bias: **mixed signals** — timeframes are not fully aligned. Treat swings as shorter-term trades and "
+                "be more selective with entries and position sizing."
+            )
+
+    st.caption(
+        "Designed for quick screenshots on mobile — table shows the raw indicator values, "
+        "while the notes summarise the preferred swing bias and entry style."
+    )
+
 
 # ── DCA COMMENTARY ─────────────────────────────────────────────
 
@@ -824,6 +1007,11 @@ v1, v2 = st.columns(2)
 if market.get("volume_24h"): v1.metric("💹 24h Volume", f"${market['volume_24h']/1e9:.2f}B")
 if market.get("market_cap"): v2.metric("🏦 Market Cap", f"${market['market_cap']/1e9:.1f}B")
 st.caption(f"⏱ Last updated: {ts} · Indicators: 10 min · Long-term data: daily")
+
+# If user selected the multi-timeframe page, render it here and stop before the full dashboard.
+if view_mode == "Multi-timeframe – Crypto":
+    render_multi_tf_crypto(df_long, price, coin_ticker)
+    st.stop()
 
 st.divider()
 
