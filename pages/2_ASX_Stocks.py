@@ -9,7 +9,6 @@ from datetime import datetime, date, timedelta
 from streamlit_autorefresh import st_autorefresh
 import math
 
-st.set_page_config(layout="wide", page_title="ASX Stock Dashboard")
 st_autorefresh(interval=300_000, key="asx_refresh")
 
 st.markdown("""
