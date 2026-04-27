@@ -52,6 +52,7 @@ st.sidebar.header("⚙️ Settings")
 coin_label = st.sidebar.selectbox("Select Coin", list(COINS.keys()))
 coin_id, coin_ticker, coin_logo = COINS[coin_label]
 timeframe = st.sidebar.radio("Timeframe", ["Daily", "Weekly"])
+view_mode = st.sidebar.radio("View", ["Dashboard", "Multi-timeframe – Crypto"], index=0)
 days = 365 if timeframe == "Weekly" else 180
 
 if st.sidebar.button("🔄 Force Refresh"):
@@ -679,6 +680,203 @@ def val_span(value, color):
 if "alerts" not in st.session_state:
     st.session_state.alerts = []
 
+
+# ── MULTI-TIMEFRAME (CRYPTO) ──────────────────────────────────
+
+import math as _math
+
+def _fmt(val, decimals=1):
+    if val is None or (isinstance(val, float) and (_math.isnan(val) or _math.isinf(val))):
+        return "N/A"
+    try:
+        return f"{val:.{decimals}f}"
+    except Exception:
+        return "N/A"
+
+def _build_multi_tf_crypto(df_daily: pd.DataFrame):
+    """Return (df_table, numeric_vals, ctx) for Daily / Weekly / Monthly timeframes."""
+    if df_daily is None or df_daily.empty:
+        return pd.DataFrame(), {}, {}
+
+    frames: dict = {}
+
+    df_d = compute_indicators(df_daily.copy())
+    df_d = df_d.dropna(subset=["RSI"])
+    if not df_d.empty:
+        frames["Daily"] = df_d
+
+    df_w = (
+        df_daily.set_index("time").resample("W")
+        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
+        .dropna().reset_index()
+    )
+    if not df_w.empty:
+        df_w = compute_indicators(df_w)
+        df_w = df_w.dropna(subset=["RSI"])
+        if not df_w.empty:
+            frames["Weekly"] = df_w
+
+    df_m = (
+        df_daily.set_index("time").resample("MS")
+        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
+        .dropna().reset_index()
+    )
+    if not df_m.empty and len(df_m) >= 6:
+        try:
+            df_m = compute_indicators(df_m)
+        except Exception:
+            df_m = pd.DataFrame()
+        if not df_m.empty:
+            df_m = df_m.dropna(subset=["RSI"])
+            if not df_m.empty:
+                frames["Monthly"] = df_m
+
+    if not frames:
+        return pd.DataFrame(), {}, {}
+
+    latest_rows = {name: f.iloc[-1] for name, f in frames.items()}
+    row_labels = ["RSI (14)", "Stoch RSI %K", "MACD", "BB %B",
+                  "EMA 50", "EMA 200", "ADX (14)", "CCI (20)", "Williams %R", "ROC (12)"]
+    table_display = {lbl: {"Daily": "N/A", "Weekly": "N/A", "Monthly": "N/A"} for lbl in row_labels}
+    numeric_vals  = {lbl: {"Daily": None,  "Weekly": None,  "Monthly": None}  for lbl in row_labels}
+    ctx: dict = {}
+
+    for tf, row in latest_rows.items():
+        sc, bc, berc, inds = composite_score(row)
+        ctx[tf] = {"score": sc, "label": signal_label(sc)}
+
+        rsi   = float(row["RSI"])        if pd.notna(row.get("RSI"))        else None
+        stoch = float(row["StochRSI_k"]) if pd.notna(row.get("StochRSI_k")) else None
+        macd  = float(row["MACD"])       if pd.notna(row.get("MACD"))       else None
+        bbp   = float(row["BB_pct"])     if pd.notna(row.get("BB_pct"))     else None
+        e50   = float(row["EMA_50"])     if pd.notna(row.get("EMA_50"))     else None
+        e200  = float(row["EMA_200"])    if pd.notna(row.get("EMA_200"))    else None
+        adx   = float(row["ADX"])        if pd.notna(row.get("ADX"))        else None
+        cci   = float(row["CCI"])        if pd.notna(row.get("CCI"))        else None
+        wr    = float(row["WilliamsR"])  if pd.notna(row.get("WilliamsR"))  else None
+        roc   = float(row["ROC"])        if pd.notna(row.get("ROC"))        else None
+
+        numeric_vals["RSI (14)"][tf]     = rsi
+        numeric_vals["Stoch RSI %K"][tf] = stoch
+        numeric_vals["MACD"][tf]         = macd
+        numeric_vals["BB %B"][tf]        = bbp * 100 if bbp is not None else None
+        numeric_vals["EMA 50"][tf]       = e50
+        numeric_vals["EMA 200"][tf]      = e200
+        numeric_vals["ADX (14)"][tf]     = adx
+        numeric_vals["CCI (20)"][tf]     = cci
+        numeric_vals["Williams %R"][tf]  = wr
+        numeric_vals["ROC (12)"][tf]     = roc
+
+        table_display["RSI (14)"][tf]     = _fmt(rsi, 1)
+        table_display["Stoch RSI %K"][tf] = _fmt(stoch, 1)
+        table_display["MACD"][tf]         = _fmt(macd, 2)
+        table_display["BB %B"][tf]        = _fmt(bbp * 100, 1) if bbp is not None else "N/A"
+        table_display["EMA 50"][tf]       = _fmt(e50, 2)
+        table_display["EMA 200"][tf]      = _fmt(e200, 2)
+        table_display["ADX (14)"][tf]     = _fmt(adx, 1)
+        table_display["CCI (20)"][tf]     = _fmt(cci, 0)
+        table_display["Williams %R"][tf]  = _fmt(wr, 1)
+        table_display["ROC (12)"][tf]     = _fmt(roc, 1)
+
+    df_table = pd.DataFrame.from_dict(table_display, orient="index")
+    for col in ["Daily", "Weekly", "Monthly"]:
+        if col not in df_table.columns:
+            df_table[col] = "N/A"
+    df_table = df_table[["Daily", "Weekly", "Monthly"]]
+    df_table.index.name = "Indicator"
+    return df_table, numeric_vals, ctx
+
+
+def _ind_color(indicator: str, value) -> str:
+    if value is None or (isinstance(value, float) and _math.isnan(value)):
+        return "color: #9ca3af"
+    rules = {
+        "RSI (14)":     (30, 70),
+        "Stoch RSI %K": (20, 80),
+        "BB %B":        (20, 80),
+        "ADX (14)":     (15, 35),
+        "CCI (20)":     (-100, 100),
+        "Williams %R":  (-80, -20),
+        "ROC (12)":     (-5, 5),
+    }
+    if indicator in rules:
+        lo, hi = rules[indicator]
+        if value <= lo: return "color: #22c55e"
+        if value >= hi: return "color: #ef4444"
+        return "color: #9ca3af"
+    if indicator == "MACD":
+        if value <= -0.5: return "color: #22c55e"
+        if value >= 0.5:  return "color: #ef4444"
+        return "color: #9ca3af"
+    return "color: #9ca3af"
+
+
+def _describe_bias(score: int) -> str:
+    if score >= 3:  return "bullish"
+    if score <= -3: return "bearish"
+    return "neutral"
+
+
+def render_multi_tf_crypto(coin_id: str, coin_ticker: str, coin_logo: str, price: float):
+    with st.spinner("Loading long-term data for multi-timeframe view..."):
+        df_daily = get_long_daily(coin_id)
+
+    if df_daily.empty or len(df_daily) < 60:
+        st.info("Not enough daily history for multi-timeframe view.")
+        return
+
+    df_table, numeric_vals, ctx = _build_multi_tf_crypto(df_daily)
+    if df_table.empty or not ctx:
+        st.info("Not enough indicator data for multi-timeframe view yet.")
+        return
+
+    logo_col, title_col = st.columns([0.4, 11])
+    with logo_col:
+        st.image(coin_logo, width=48)
+    with title_col:
+        st.markdown(f"#### {coin_ticker}  —  ${price:,.2f}")
+
+    st.markdown("##### 📊 Multi-timeframe Technical Snapshot")
+    st.caption("Daily / Weekly / Monthly indicator values from CryptoCompare long-term history.")
+
+    def _style_col(col: pd.Series):
+        tf = col.name
+        styles = []
+        for ind in df_table.index:
+            val = numeric_vals.get(ind, {}).get(tf)
+            styles.append(_ind_color(ind, val))
+        return styles
+
+    styled = df_table.style.apply(_style_col, axis=0)
+    st.table(styled)
+
+    st.markdown("##### 🧠 Swing Bias by Timeframe")
+    d = ctx.get("Daily")
+    w = ctx.get("Weekly")
+    m = ctx.get("Monthly")
+    if d: st.markdown(f"**Daily:** {d['label']}")
+    if w: st.markdown(f"**Weekly:** {w['label']}")
+    if m: st.markdown(f"**Monthly:** {m['label']}")
+
+    if d and w and m:
+        db = _describe_bias(d["score"])
+        wb = _describe_bias(w["score"])
+        mb = _describe_bias(m["score"])
+        if db == wb == "bullish" and mb != "bearish":
+            st.markdown("- **Bias: trend-following longs** — Daily and Weekly aligned bullish, Monthly at least neutral.")
+            st.markdown("- Setup: Look for pullbacks toward EMA 50 or RSI < 45 for DCA entries.")
+        elif db == "bullish" and wb != "bullish" and mb == "bearish":
+            st.markdown("- **Bias: counter-trend long** — Daily strength against weak higher timeframes.")
+            st.markdown("- Setup: Shorter holding periods; take profits into Weekly resistance.")
+        elif db == wb == "bearish":
+            st.markdown("- **Bias: avoid longs / reduce exposure** — Daily and Weekly both bearish.")
+            st.markdown("- Setup: Wait for extreme oversold confluence (RSI < 30, Williams %R < -80) before any DCA.")
+        else:
+            st.markdown("- **Bias: mixed** — timeframes not aligned. Reduce position size and wait for confluence.")
+
+    st.caption("Based on CryptoCompare daily OHLC history, resampled to Weekly and Monthly.")
+
+
 # ── LOAD ALL DATA ──────────────────────────────────────────────
 
 with st.spinner("Loading price data..."):
@@ -692,6 +890,12 @@ with st.spinner("Loading global sentiment..."):
 with st.spinner("Loading long-term data..."):
     df_long     = get_long_daily(coin_id)
     df_btc_long = get_long_daily("bitcoin")
+
+# ── MULTI-TIMEFRAME VIEW ───────────────────────────────────────
+if view_mode == "Multi-timeframe – Crypto":
+    price_preview = market.get("price", 0) or 0
+    render_multi_tf_crypto(coin_id, coin_ticker, coin_logo, price_preview)
+    st.stop()
 
 if df.empty or len(df) < 20:
     st.error("Not enough OHLC data. Try refreshing.")
