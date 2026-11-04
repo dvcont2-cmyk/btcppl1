@@ -271,7 +271,7 @@ def render_supertrend(df, key, currency='AUD'):
                 name=f'ST {period},{factor:g} {side}',legendgroup=f'ST{j}'))
     if df.EMA_200.notna().any():
         fig.add_trace(go.Scatter(x=df.time,y=df.EMA_200,name='EMA 200',line=dict(color='#fbbf24',dash='dot')))
-    for col,name,symbol,color in [('entry_fill','Buy fill','triangle-up','#22c55e'),('exit_fill','Sell fill','triangle-down','#ef4444')]:
+    for col,name,symbol,color in [('entry_fill','Buy fill','triangle-up','#facc15'),('exit_fill','Sell fill','triangle-down','#3b82f6')]:
         mask=curve[col].notna()
         fig.add_trace(go.Scatter(x=curve.loc[mask,'open_time'],y=curve.loc[mask,col],mode='markers',name=name,marker=dict(symbol=symbol,color=color,size=13)))
     fig.update_layout(height=600,xaxis_rangeslider_visible=False,yaxis_title=currency,legend=dict(orientation='h'))
