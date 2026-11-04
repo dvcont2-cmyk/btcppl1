@@ -1,3 +1,5 @@
+from dashboard_core import completed_bars, clean_ohlc, support_resistance, render_supertrend
+from dashboard_core import compute_indicators as core_indicators, triple_supertrend_signals as core_supertrend
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -40,14 +42,14 @@ STOCK_NOTES = {
     "EPM.AX":  "Junior explorer — very low liquidity. TA signals less reliable; treat as speculative only.",
     "NST.AX":  "Mid-cap gold miner — tracks gold price closely. Safe-haven flows & AUD/USD matter.",
     "PLS.AX":  "Lithium producer — more liquid than CXO. Tied to lithium carbonate spot & EV demand.",
-    "VAS.AX":  "ASX 200 ETF — broad market exposure. TA best used for market timing, not stock picking.",
+    "VAS.AX":  "ASX 300 ETF — broad market exposure. TA best used for market timing, not stock picking.",
     "VGS.AX":  "Global ex-AU ETF — tracks MSCI World. USD/AUD FX has significant impact on returns.",
     "VDHG.AX": "Diversified high growth ETF — slow mover, best for long-term DCA. TA less meaningful.",
     "DHHF.AX": "100% equities diversified ETF — similar to VDHG. Swing trading not ideal; DCA vehicle.",
     "VGE.AX":  "Emerging markets ETF — higher volatility than VGS. Geopolitical risk & USD are key.",
 }
 
-SWING_TRADE_SUITABLE = {"PDN.AX", "CXO.AX", "NST.AX", "PLS.AX", "EPM.AX"}
+SWING_TRADE_SUITABLE = {"PDN.AX", "CXO.AX", "NST.AX", "PLS.AX"}
 
 st.sidebar.header("Settings")
 stock_label = st.sidebar.selectbox("Select Stock / ETF", list(ASX_STOCKS.keys()))
@@ -67,10 +69,10 @@ range_map = {"3 Months": 90, "6 Months": 180, "1 Year": 365,
 
 if range_option == "Custom":
     col_s, col_e = st.sidebar.columns(2)
-    date_start = col_s.date_input("From", value=date.today() - timedelta(days=730))
-    date_end   = col_e.date_input("To",   value=date.today())
+    date_start = col_s.date_input("From", value=pd.Timestamp.now(tz="Australia/Sydney").date() - timedelta(days=730))
+    date_end   = col_e.date_input("To",   value=pd.Timestamp.now(tz="Australia/Sydney").date())
 else:
-    date_end   = date.today()
+    date_end   = pd.Timestamp.now(tz="Australia/Sydney").date()
     date_start = date_end - timedelta(days=range_map[range_option])
 
 if st.sidebar.button("Force Refresh"):
@@ -101,23 +103,24 @@ def status_line(message, sentiment):
 @st.cache_data(ttl=300)
 def get_stock_data(ticker, start_date, end_date, interval):
     try:
-        df = yf.download(
-            ticker,
-            start=start_date.strftime("%Y-%m-%d"),
-            end=end_date.strftime("%Y-%m-%d"),
-            interval=interval,
-            auto_adjust=True,
-            progress=False
-        )
-        if df.empty:
+        now = pd.Timestamp.now(tz="Australia/Sydney")
+        # Conservative close cutoff: include today's ASX daily bar only after 17:00 local.
+        available = now.tz_localize(None).normalize()
+        if now.hour >= 17:
+            available += pd.Timedelta(days=1)
+        cutoff = min(pd.Timestamp(end_date)+pd.Timedelta(days=1), available)
+        history_start = min(pd.Timestamp("2000-01-01"), pd.Timestamp(start_date)-pd.DateOffset(years=10))
+        raw = yf.download(ticker, start=history_start.strftime("%Y-%m-%d"),
+            end=cutoff.strftime("%Y-%m-%d"), interval="1d", auto_adjust=True, progress=False)
+        if raw.empty:
             return pd.DataFrame()
-        df = df.reset_index()
-        df.columns = [c[0].lower() if isinstance(c, tuple) else c.lower() for c in df.columns]
-        df = df.rename(columns={"date": "time", "datetime": "time"})
-        for col in ["open", "high", "low", "close"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-        df = df.dropna(subset=["close"]).reset_index(drop=True)
-        return df
+        raw = raw.reset_index()
+        raw.columns = [c[0].lower() if isinstance(c,tuple) else c.lower() for c in raw.columns]
+        raw = raw.rename(columns={"date":"time", "datetime":"time"})
+        daily = completed_bars(raw, "Daily", cutoff)
+        out = completed_bars(daily, "Weekly" if interval=="1wk" else "Daily", cutoff)
+        out.attrs['asof'] = cutoff
+        return out
     except Exception as e:
         st.error(f"Data fetch error: {e}")
         return pd.DataFrame()
@@ -145,297 +148,21 @@ def get_stock_info(ticker):
 
 
 def compute_indicators(df):
-    df = df.copy()
-    df["RSI"]         = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
-    stoch             = ta.momentum.StochRSIIndicator(df["close"], window=14)
-    df["StochRSI_k"]  = stoch.stochrsi_k() * 100
-    df["StochRSI_d"]  = stoch.stochrsi_d() * 100
-    macd              = ta.trend.MACD(df["close"])
-    df["MACD"]        = macd.macd()
-    df["MACD_signal"] = macd.macd_signal()
-    df["MACD_hist"]   = macd.macd_diff()
-    bb                = ta.volatility.BollingerBands(df["close"], window=20)
-    df["BB_upper"]    = bb.bollinger_hband()
-    df["BB_lower"]    = bb.bollinger_lband()
-    df["BB_mid"]      = bb.bollinger_mavg()
-    df["BB_pct"]      = bb.bollinger_pband()
-    df["EMA_50"]      = ta.trend.EMAIndicator(df["close"], window=50).ema_indicator()
-    df["EMA_200"]     = ta.trend.EMAIndicator(df["close"], window=200).ema_indicator()
-    adx               = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14)
-    df["ADX"]         = adx.adx()
-    df["ADX_pos"]     = adx.adx_pos()
-    df["ADX_neg"]     = adx.adx_neg()
-    df["CCI"]         = ta.trend.CCIIndicator(df["high"], df["low"], df["close"], window=20).cci()
-    df["WilliamsR"]   = ta.momentum.WilliamsRIndicator(df["high"], df["low"], df["close"], lbp=14).williams_r()
-    df["ROC"]         = ta.momentum.ROCIndicator(df["close"], window=12).roc()
-    df["ATR"]         = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range()
-    kc_mid            = df["close"].rolling(20).mean()
-    atr20             = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=20).average_true_range()
-    kc_upper          = kc_mid + 1.5 * atr20
-    kc_lower          = kc_mid - 1.5 * atr20
-    df["squeeze"]     = (bb.bollinger_hband() < kc_upper) & (bb.bollinger_lband() > kc_lower)
-    delta             = df["close"] - ((df["high"].rolling(20).max() + df["low"].rolling(20).min()) / 2 + df["close"].rolling(20).mean()) / 2
-    df["squeeze_hist"] = delta.rolling(20).mean()
-    return df
-
-
-def compute_supertrend(df, period, multiplier):
-    atr         = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=period).average_true_range()
-    hl_avg      = (df["high"] + df["low"]) / 2
-    basic_upper = (hl_avg + multiplier * atr).values.copy()
-    basic_lower = (hl_avg - multiplier * atr).values.copy()
-    close       = df["close"].values
-    final_upper = basic_upper.copy()
-    final_lower = basic_lower.copy()
-    supertrend  = np.full(len(df), np.nan)
-    direction   = np.zeros(len(df), dtype=int)
-
-    for i in range(1, len(df)):
-        if np.isnan(atr.iloc[i]):
-            continue
-        if basic_upper[i] < final_upper[i-1] or close[i-1] > final_upper[i-1]:
-            final_upper[i] = basic_upper[i]
-        else:
-            final_upper[i] = final_upper[i-1]
-        if basic_lower[i] > final_lower[i-1] or close[i-1] < final_lower[i-1]:
-            final_lower[i] = basic_lower[i]
-        else:
-            final_lower[i] = final_lower[i-1]
-        if direction[i-1] == 1:
-            direction[i] = -1 if close[i] < final_lower[i] else 1
-        else:
-            direction[i] = 1 if close[i] > final_upper[i] else -1
-        supertrend[i] = final_lower[i] if direction[i] == 1 else final_upper[i]
-
-    return pd.Series(supertrend, index=df.index), pd.Series(direction, index=df.index)
+    return core_indicators(df)
 
 
 def triple_supertrend_signals(df):
-    df = df.copy()
-    df["st1"], df["dir1"] = compute_supertrend(df, period=7,  multiplier=3.0)
-    df["st2"], df["dir2"] = compute_supertrend(df, period=14, multiplier=2.0)
-    df["st3"], df["dir3"] = compute_supertrend(df, period=21, multiplier=1.0)
-    df["buy_signal"]  = None
-    df["sell_signal"] = None
-    for i in range(1, len(df)):
-        d1, d2, d3   = df["dir1"].iloc[i], df["dir2"].iloc[i], df["dir3"].iloc[i]
-        pd1, pd2, pd3 = df["dir1"].iloc[i-1], df["dir2"].iloc[i-1], df["dir3"].iloc[i-1]
-        c = df["close"].iloc[i]
-        cross_up = (d1==1 and pd1==-1) or (d2==1 and pd2==-1) or (d3==1 and pd3==-1)
-        cross_dn = (d1==-1 and pd1==1) or (d2==-1 and pd2==1) or (d3==-1 and pd3==1)
-        if cross_up:
-            df.at[df.index[i], "buy_signal"]  = c
-        if cross_dn:
-            df.at[df.index[i], "sell_signal"] = c
-    return df
-
-
-# ── CHART 1: Segment-by-segment coloured lines ────────────────
-
-def add_st_segments(fig, df, st_col, dir_col, bull_color, bear_color, name, show_legend=True):
-    x_vals  = df["time"].values
-    y_vals  = df[st_col].values
-    dirs    = df[dir_col].values
-    legend_bull_added = False
-    legend_bear_added = False
-    for i in range(1, len(df)):
-        if np.isnan(y_vals[i]) or np.isnan(y_vals[i-1]):
-            continue
-        is_bull = dirs[i] == 1
-        color   = bull_color if is_bull else bear_color
-        show_leg = False
-        if show_legend:
-            if is_bull and not legend_bull_added:
-                show_leg = True
-                legend_bull_added = True
-            elif not is_bull and not legend_bear_added:
-                show_leg = True
-                legend_bear_added = True
-        fig.add_trace(go.Scatter(
-            x=[x_vals[i-1], x_vals[i]],
-            y=[y_vals[i-1], y_vals[i]],
-            mode="lines",
-            line=dict(color=color, width=2),
-            name=f"{name} {'Bull' if is_bull else 'Bear'}" if show_leg else None,
-            showlegend=show_leg,
-            legendgroup=f"{name}_{'bull' if is_bull else 'bear'}",
-            hoverinfo="skip"
-        ))
-
-
-def build_chart1(df):
-    fig = go.Figure()
-    fig.add_trace(go.Candlestick(
-        x=df["time"], open=df["open"], high=df["high"],
-        low=df["low"], close=df["close"],
-        name="Price",
-        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
-        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
-
-    add_st_segments(fig, df, "st1", "dir1", "#34d399", "#f87171", "ST1(7,3.0)", show_legend=True)
-    add_st_segments(fig, df, "st2", "dir2", "#60a5fa", "#fb923c", "ST2(14,2.0)", show_legend=True)
-    add_st_segments(fig, df, "st3", "dir3", "#c084fc", "#f472b6", "ST3(21,1.0)", show_legend=True)
-
-    buy_df  = df[df["buy_signal"].notna()]
-    sell_df = df[df["sell_signal"].notna()]
-
-    fig.add_trace(go.Scatter(
-        x=buy_df["time"], y=buy_df["buy_signal"].astype(float) * 0.995,
-        mode="markers", name="Buy Signal",
-        marker=dict(symbol="triangle-up", size=12, color="#22c55e",
-                    line=dict(color="white", width=1))))
-    fig.add_trace(go.Scatter(
-        x=sell_df["time"], y=sell_df["sell_signal"].astype(float) * 1.005,
-        mode="markers", name="Sell Signal",
-        marker=dict(symbol="triangle-down", size=12, color="#ef4444",
-                    line=dict(color="white", width=1))))
-
-    fig.update_layout(
-        title="Triple Supertrend Chart 1",
-        height=600,
-        margin=dict(t=50, b=10),
-        xaxis_rangeslider_visible=False,
-        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)")
-    return fig
-
-
-# ── CHART 2: Nordman-style ─────────────────────────────────────
-# Green line below price (support) when bullish, red line above (resistance) when bearish
-# Candles coloured by how many STs are bullish
-# EMA 200 shown
-# Big arrows only when ALL 3 align AND Stoch RSI confirms
-
-def build_chart2(df):
-    fig = go.Figure()
-
-    # Background shading: green zone when all 3 bull, red zone when all 3 bear
-    all_bull = (df["dir1"] == 1) & (df["dir2"] == 1) & (df["dir3"] == 1)
-    all_bear = (df["dir1"] == -1) & (df["dir2"] == -1) & (df["dir3"] == -1)
-
-    def add_bg_zones(fig, df, mask, color):
-        in_zone = False
-        start   = None
-        for i, val in enumerate(mask):
-            if val and not in_zone:
-                in_zone = True
-                start   = df["time"].iloc[i]
-            elif not val and in_zone:
-                in_zone = False
-                fig.add_vrect(x0=start, x1=df["time"].iloc[i-1],
-                              fillcolor=color, opacity=0.08,
-                              layer="below", line_width=0)
-        if in_zone:
-            fig.add_vrect(x0=start, x1=df["time"].iloc[-1],
-                          fillcolor=color, opacity=0.08,
-                          layer="below", line_width=0)
-
-    add_bg_zones(fig, df, all_bull, "#22c55e")
-    add_bg_zones(fig, df, all_bear, "#ef4444")
-
-    # Candles coloured by bull count (3=bright green, 2=dim green, 1=dim red, 0=bright red)
-    def candle_color(row):
-        bulls = sum(1 for d in [row["dir1"], row["dir2"], row["dir3"]] if d == 1)
-        if   bulls == 3: return "#22c55e", "#22c55e"
-        elif bulls == 2: return "#86efac", "#86efac"
-        elif bulls == 1: return "#fca5a5", "#fca5a5"
-        else:            return "#ef4444", "#ef4444"
-
-    up_color   = []
-    down_color = []
-    for _, row in df.iterrows():
-        uc, dc = candle_color(row)
-        up_color.append(uc)
-        down_color.append(dc)
-
-    fig.add_trace(go.Candlestick(
-        x=df["time"], open=df["open"], high=df["high"],
-        low=df["low"], close=df["close"],
-        name="Price",
-        increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
-        increasing_fillcolor="#22c55e",  decreasing_fillcolor="#ef4444"))
-
-    # ST lines: only draw the ACTIVE side — green below when bull, red above when bear
-    # One trace per ST, show only the relevant (active) line per bar
-    st_configs = [
-        ("st1", "dir1", "#00e676", "#ff1744", "ST1 (7, 3.0)"),
-        ("st2", "dir2", "#00bcd4", "#ff9800", "ST2 (14, 2.0)"),
-        ("st3", "dir3", "#ce93d8", "#f06292", "ST3 (21, 1.0)"),
-    ]
-    for st_col, dir_col, bull_c, bear_c, label in st_configs:
-        add_st_segments(fig, df, st_col, dir_col, bull_c, bear_c, label, show_legend=True)
-
-    # EMA 200
-    if df["EMA_200"].notna().any():
-        fig.add_trace(go.Scatter(
-            x=df["time"], y=df["EMA_200"],
-            name="EMA 200",
-            line=dict(color="#fbbf24", width=2, dash="dot")))
-
-    # Big arrows: ALL 3 bullish + Stoch RSI K < 20 (oversold confirms long)
-    #             ALL 3 bearish + Stoch RSI K > 80 (overbought confirms short)
-    all3_bull_rows = df[(df["dir1"] == 1) & (df["dir2"] == 1) & (df["dir3"] == 1)]
-    all3_bear_rows = df[(df["dir1"] == -1) & (df["dir2"] == -1) & (df["dir3"] == -1)]
-
-    # Fire arrow only on the first bar of alignment (transition into all-3)
-    bull_align_starts = []
-    bear_align_starts = []
-    prev_bulls = prev_bears = False
-    for i, row in df.iterrows():
-        cur_bulls = (row["dir1"]==1 and row["dir2"]==1 and row["dir3"]==1)
-        cur_bears = (row["dir1"]==-1 and row["dir2"]==-1 and row["dir3"]==-1)
-        if cur_bulls and not prev_bulls:
-            bull_align_starts.append(i)
-        if cur_bears and not prev_bears:
-            bear_align_starts.append(i)
-        prev_bulls = cur_bulls
-        prev_bears = cur_bears
-
-    bull_signal_df = df.loc[bull_align_starts]
-    bear_signal_df = df.loc[bear_align_starts]
-
-    fig.add_trace(go.Scatter(
-        x=bull_signal_df["time"],
-        y=bull_signal_df["low"].astype(float) * 0.990,
-        mode="markers+text",
-        name="All 3 Bullish",
-        text=["▲"] * len(bull_signal_df),
-        textfont=dict(size=22, color="#00e676"),
-        marker=dict(symbol="triangle-up", size=18, color="#00e676",
-                    line=dict(color="white", width=1)),
-        textposition="bottom center"))
-
-    fig.add_trace(go.Scatter(
-        x=bear_signal_df["time"],
-        y=bear_signal_df["high"].astype(float) * 1.010,
-        mode="markers+text",
-        name="All 3 Bearish",
-        text=["▼"] * len(bear_signal_df),
-        textfont=dict(size=22, color="#ff1744"),
-        marker=dict(symbol="triangle-down", size=18, color="#ff1744",
-                    line=dict(color="white", width=1)),
-        textposition="top center"))
-
-    fig.update_layout(
-        title="Triple Supertrend Chart 2  (Nordman-style)",
-        height=650,
-        margin=dict(t=50, b=10),
-        xaxis_rangeslider_visible=False,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        plot_bgcolor="#0e1117",
-        paper_bgcolor="rgba(0,0,0,0)")
-    return fig
+    return core_supertrend(df)
 
 
 def detect_trend_structure(df, window=3):
     closes = df["close"].values
     highs_pts, lows_pts = [], []
     for i in range(window, len(closes) - window):
-        if closes[i] == max(closes[max(0, i-window):i+window+1]):
-            highs_pts.append(closes[i])
-        if closes[i] == min(closes[max(0, i-window):i+window+1]):
-            lows_pts.append(closes[i])
+        if df["high"].iloc[i] == df["high"].iloc[i-window:i+window+1].max():
+            highs_pts.append(df["high"].iloc[i])
+        if df["low"].iloc[i] == df["low"].iloc[i-window:i+window+1].min():
+            lows_pts.append(df["low"].iloc[i])
     if len(highs_pts) >= 2 and len(lows_pts) >= 2:
         hh = highs_pts[-1] > highs_pts[-2]
         hl = lows_pts[-1]  > lows_pts[-2]
@@ -447,23 +174,8 @@ def detect_trend_structure(df, window=3):
     return "⚪ Not enough swing points yet", "gray"
 
 
-def detect_support_resistance(df, window=3, num_levels=4):
-    highs = df["high"] if "high" in df.columns else df["close"]
-    lows  = df["low"]  if "low"  in df.columns else df["close"]
-    resistance, support = [], []
-    for i in range(window, len(df) - window):
-        if all(highs.iloc[i] >= highs.iloc[i-window:i]) and            all(highs.iloc[i] >= highs.iloc[i+1:i+window+1]):
-            resistance.append(float(highs.iloc[i]))
-        if all(lows.iloc[i] <= lows.iloc[i-window:i]) and            all(lows.iloc[i] <= lows.iloc[i+1:i+window+1]):
-            support.append(float(lows.iloc[i]))
-    def cluster(levels, pct=0.02):
-        levels = sorted(l for l in set(levels) if l > 0)
-        clustered = []
-        for l in levels:
-            if not clustered or abs(l - clustered[-1]) / clustered[-1] > pct:
-                clustered.append(l)
-        return clustered
-    return cluster(support)[:num_levels], cluster(resistance)[-num_levels:]
+def detect_support_resistance(df, window=3, num_levels=5):
+    return support_resistance(df, window, num_levels)
 
 
 def composite_score(row):
@@ -568,11 +280,11 @@ def composite_score(row):
 
 
 def signal_label(score):
-    if score >= 7:   return "🟢 STRONG BUY"
-    elif score >= 3: return "🟡 WATCH / ACCUMULATE"
-    elif score >= -2:return "⚪ HOLD / NEUTRAL"
-    elif score >= -5:return "🟠 CAUTION / REDUCE"
-    else:            return "🔴 STRONG SELL / AVOID"
+    if score >= 7: return "Strong bullish heuristic score"
+    if score >= 3: return "Bullish heuristic score"
+    if score >= -2: return "Mixed heuristic score"
+    if score >= -5: return "Bearish heuristic score"
+    return "Strong bearish heuristic score"
 
 
 # ── MULTI-TIMEFRAME SNAPSHOT (ASX) ─────────────────────────────
@@ -601,12 +313,7 @@ def _build_multi_tf_summary_asx(df_daily: pd.DataFrame):
         frames["Daily"] = df_d
 
     # Weekly resample from daily
-    df_w = (
-        df_daily.set_index("time").resample("W")
-        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
-        .dropna()
-        .reset_index()
-    )
+    df_w = completed_bars(df_daily, "Weekly", df_daily.attrs.get("asof"))
     if not df_w.empty:
         df_w = compute_indicators(df_w)
         df_w = df_w.dropna(subset=["RSI"])
@@ -614,12 +321,7 @@ def _build_multi_tf_summary_asx(df_daily: pd.DataFrame):
             frames["Weekly"] = df_w
 
     # Monthly resample from daily (month start)
-    df_m = (
-        df_daily.set_index("time").resample("MS")
-        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
-        .dropna()
-        .reset_index()
-    )
+    df_m = completed_bars(df_daily, "Monthly", df_daily.attrs.get("asof"))
     # For monthly, ensure we have enough data points for indicators like ADX to work safely
     if not df_m.empty and len(df_m) >= 6:  # ~6+ months of data
         try:
@@ -770,7 +472,7 @@ def render_multi_tf_asx(ticker: str, date_start, date_end, info: dict):
         st.info("Not enough indicator data for multi-timeframe view yet.")
         return
 
-    price = info.get("price") or float(df_daily["close"].iloc[-1])
+    price = float(df_daily["close"].iloc[-1])
 
     st.markdown("#### ASX Multi-timeframe Technical Snapshot")
     st.caption("Daily / Weekly / Monthly values for key swing indicators.")
@@ -823,7 +525,9 @@ def render_multi_tf_asx(ticker: str, date_start, date_end, info: dict):
 
 
 def swing_trade_commentary(row, df, ticker, price, score, info):
-    atr       = row["ATR"] if pd.notna(row["ATR"]) else price * 0.03
+    atr = row["ATR"]
+    if pd.isna(atr) or atr <= 0:
+        return [("Insufficient volatility history", "ATR is unavailable or zero; no entry/stop sizing is calculated.", "", "gray")]
     ema50     = row["EMA_50"]
     ema200    = row["EMA_200"]
     rsi       = row["RSI"]
@@ -833,7 +537,7 @@ def swing_trade_commentary(row, df, ticker, price, score, info):
     adx       = row["ADX"]
     adx_pos   = row["ADX_pos"]
     adx_neg   = row["ADX_neg"]
-    squeeze   = row["squeeze"]
+    squeeze   = row["squeeze_fired"]
     week52_high = info.get("week52_high")
     week52_low  = info.get("week52_low")
     support_levels, resistance_levels = detect_support_resistance(df)
@@ -854,7 +558,7 @@ def swing_trade_commentary(row, df, ticker, price, score, info):
     trending_up    = strong_trend and pd.notna(adx_pos) and pd.notna(adx_neg) and adx_pos > adx_neg
 
     if golden_cross and above_ema200 and rsi_oversold and macd_bullish:
-        stop   = nearest_support - atr * 0.5
+        stop   = max(price * 0.001, nearest_support - atr * 0.5)
         target = nearest_resistance
         rr     = (target - price) / (price - stop) if (price - stop) > 0 else 0
         signals.append(("🟢 SWING BUY - Pullback in Uptrend",
@@ -862,19 +566,19 @@ def swing_trade_commentary(row, df, ticker, price, score, info):
             f"Entry: ${price:,.4f} | Stop: ${stop:,.4f} (-{((price-stop)/price)*100:.1f}%) | Target: ${target:,.4f} (+{((target-price)/price)*100:.1f}%) | R:R {rr:.1f}x",
             "green"))
     elif rsi_extreme and wr_oversold and stoch_low:
-        stop   = price - atr * 1.5
+        stop   = max(price * 0.001, price - atr * 1.5)
         target = ema50 if pd.notna(ema50) and ema50 > price else nearest_resistance
         rr     = (target - price) / (price - stop) if (price - stop) > 0 else 0
         signals.append(("🟡 SWING WATCH - Extreme Oversold Reversal",
-            f"Triple oversold confluence: RSI ({rsi:.1f}), Williams %R ({wr:.1f}), Stoch K ({stoch_k:.1f}). {'Caution - Death Cross active.' if death_cross else 'No Death Cross - more reliable.'}",
+            f"Triple oversold confluence: RSI ({rsi:.1f}), Williams %R ({wr:.1f}), Stoch K ({stoch_k:.1f}). {'Caution - Death Cross active.' if death_cross else 'No Death Cross detected.'}",
             f"Entry: ${price:,.4f} | Stop: ${stop:,.4f} (-{((price-stop)/price)*100:.1f}%) | Target: ${target:,.4f} (+{((target-price)/price)*100:.1f}%) | R:R {rr:.1f}x",
             "yellow"))
-    elif trending_up and macd_bullish and not rsi_overbought and squeeze == False:
-        stop   = ema50 if pd.notna(ema50) else price - atr * 2
+    elif trending_up and macd_bullish and not rsi_overbought and squeeze:
+        stop   = max(price * 0.001, min(ema50, price - atr) if pd.notna(ema50) else price - atr * 2)
         target = nearest_resistance
         rr     = (target - price) / (price - stop) if (price - stop) > 0 else 0
         signals.append(("🟢 SWING BUY - Momentum Breakout",
-            f"TTM Squeeze released. ADX ({adx:.1f}) confirms strong trend, +DI ({adx_pos:.1f}) > -DI ({adx_neg:.1f}). MACD confirming.",
+            f"Squeeze (approximation) released. ADX ({adx:.1f}) confirms strong trend, +DI ({adx_pos:.1f}) > -DI ({adx_neg:.1f}). MACD confirming.",
             f"Entry: ${price:,.4f} | Stop: ${stop:,.4f} (-{((price-stop)/price)*100:.1f}%) | Target: ${target:,.4f} (+{((target-price)/price)*100:.1f}%) | R:R {rr:.1f}x",
             "green"))
     elif death_cross and rsi_overbought and stoch_high:
@@ -886,7 +590,7 @@ def swing_trade_commentary(row, df, ticker, price, score, info):
         if score >= 0:
             signals.append(("⚪ NO CLEAR SWING SETUP - Leaning Neutral/Bullish",
                 f"Indicators mixed. {'Golden Cross - wait for dip to EMA 50 or RSI < 45.' if golden_cross else 'Watch for Golden Cross or oversold bounce.'}",
-                "Monitor for RSI dip below 40 or TTM Squeeze firing.", "gray"))
+                "Monitor for RSI dip below 40 or Squeeze (approximation) firing.", "gray"))
         else:
             signals.append(("🟠 NO CLEAR SWING SETUP - Leaning Bearish",
                 f"More bearish signals. {'Death Cross active.' if death_cross else 'Trend weakening.'} Avoid new longs until RSI < 30 and MACD turns positive.",
@@ -902,16 +606,20 @@ def swing_trade_commentary(row, df, ticker, price, score, info):
             f"{'Near lows - potential value zone.' if range_pos < 30 else 'Near highs - higher risk.' if range_pos > 70 else 'Mid-range.'}",
             "blue"))
 
-    if pd.notna(atr):
+    if pd.notna(atr) and atr > 0:
         atr_pct = (atr / price) * 100
         signals.append(("📏 ATR Volatility - Position Sizing",
             f"ATR (14): ${atr:,.4f} ({atr_pct:.1f}% of price) | Stop 1.5x: ${atr*1.5:,.4f} | Stop 2x: ${atr*2:,.4f}",
-            f"For 1% portfolio risk at 1.5x ATR stop: position size approx {(0.01 / ((atr * 1.5) / price)) * 100:.1f}% of capital.",
+            f"Illustrative position for 1% risk at 1.5x ATR stop: {min(100, (0.01 / ((atr * 1.5) / price)) * 100):.1f}% of capital (capped at 100%; gaps/costs can increase losses).",
             "purple"))
     return signals
 
 
 # ── LOAD DATA ──────────────────────────────────────────────────
+
+if date_start > date_end:
+    st.error("From date must be on or before To date.")
+    st.stop()
 
 interval = "1d" if timeframe == "Daily" else "1wk"
 
@@ -923,25 +631,38 @@ if view_mode == "Multi-timeframe – ASX":
     render_multi_tf_asx(ticker, date_start, date_end, info)
     st.stop()
 
-min_bars = 60 if interval == "1d" else 15
+min_bars = 2
 if df.empty or len(df) < min_bars:
     st.error(f"Not enough data for {ticker} ({len(df) if not df.empty else 0} bars). Try a wider range.")
     st.stop()
 
 df = compute_indicators(df)
-df = df.dropna(subset=["RSI"]).reset_index(drop=True)
+df = df.reset_index(drop=True)
 
 if df.empty:
     st.error(f"Not enough bars after indicator calculation for {ticker}. Try a wider date range.")
     st.stop()
 
 df     = triple_supertrend_signals(df)
+df     = df[df.time >= pd.Timestamp(date_start)].reset_index(drop=True)
+if len(df) < 2:
+    st.info("Fewer than two completed candles in this range. Extend the range.")
+    st.stop()
 latest = df.iloc[-1]
 
 if pd.isna(latest["EMA_200"]) and interval == "1wk":
     st.warning("⚠️ EMA 200 not available — extend range to 4+ years for full weekly indicator coverage.")
 
-price         = info.get("price") or float(latest["close"])
+live_price = info.get("price")
+price = float(latest["close"])
+# Historical context must never pull today's 52-week levels into old analysis.
+history_daily = get_stock_data(ticker, date_start, date_end, "1d")
+trailing_year = history_daily[history_daily.time > latest["time"]-pd.Timedelta(days=365)]
+trailing_year = trailing_year[trailing_year.time <= latest["time"]]
+info = dict(info, week52_high=float(trailing_year.high.max()), week52_low=float(trailing_year.low.min()))
+st.caption(f"Analysis uses completed {timeframe.lower()} close dated {latest['time']:%d %b %Y}. Weekly candles are confirmed after Sunday; the current week is excluded.")
+if live_price:
+    st.caption(f"Latest provider quote (separate from analysis): AUD {live_price:,.4f}. Company metrics below are current, not historical.")
 score, bullish_count, bearish_count, indicators = composite_score(latest)
 neutral_count = 10 - bullish_count - bearish_count
 label         = signal_label(score)
@@ -985,7 +706,7 @@ if info.get("sector"):
     st.caption(f"Sector: {info.get('sector')} | {info.get('industry')}")
 
 if is_swing_suitable:
-    st.success("Swing Trade Suitable - sufficient liquidity and volatility for active swing trading.")
+    st.success("Watchlist stock — verify current liquidity and spread before interpreting trade results.")
 else:
     st.info("ETF / Low-liquidity stock - better suited to DCA / long-term holding than active swing trading.")
 
@@ -1015,7 +736,8 @@ st.divider()
 
 # ── SWING TRADE ANALYSIS ───────────────────────────────────────
 
-st.markdown("### Swing Trade Analysis")
+st.markdown("### Heuristic Swing Analysis")
+st.caption("These commentary rules are separate from the Supertrend backtest and have not been performance-validated.")
 signal_color_map = {
     "green": "#22c55e", "yellow": "#fbbf24", "red": "#f87171",
     "gray":  "#9ca3af", "orange": "#f97316", "blue": "#60a5fa", "purple": "#c084fc",
@@ -1034,7 +756,7 @@ for title, detail, levels, color_key in swing_signals:
 st.caption("Not financial advice. All signals are algorithmic. Confirm with volume and broader market context.")
 st.divider()
 
-with st.expander("All 10 Indicators - Signal Breakdown", expanded=False):
+with st.expander("All 10 Indicators - Heuristic Score Breakdown", expanded=False):
     bullish_list = [(n, d) for n, s, e, d in indicators if s > 0]
     neutral_list = [(n, d) for n, s, e, d in indicators if s == 0]
     bearish_list = [(n, d) for n, s, e, d in indicators if s < 0]
@@ -1054,58 +776,7 @@ with st.expander("All 10 Indicators - Signal Breakdown", expanded=False):
 
 st.divider()
 
-# ── TRIPLE SUPERTREND STATUS ───────────────────────────────────
-
-st.markdown("### 📊 Triple Supertrend")
-bulls = sum(1 for d in [latest["dir1"], latest["dir2"], latest["dir3"]] if d == 1)
-bears = sum(1 for d in [latest["dir1"], latest["dir2"], latest["dir3"]] if d == -1)
-
-def st_badge(direction):
-    if direction == 1:
-        return val_span("▲ Bull", "#22c55e")
-    else:
-        return val_span("▼ Bear", "#ef4444")
-
-st.markdown(
-    f"<p style='font-size:0.9rem; margin-bottom:2px'>"
-    f"ST1 (7, 3.0): {st_badge(latest['dir1'])} &nbsp;&nbsp; "
-    f"ST2 (14, 2.0): {st_badge(latest['dir2'])} &nbsp;&nbsp; "
-    f"ST3 (21, 1.0): {st_badge(latest['dir3'])}"
-    f"</p>",
-    unsafe_allow_html=True)
-
-if bulls == 3:
-    status_line("All 3 Supertrends bullish — strong trend alignment, high-conviction long setup.", "strong_bullish")
-elif bulls == 2:
-    status_line("2 of 3 Supertrends bullish — leaning up, wait for ST3 (21,1) to confirm.", "bullish")
-elif bears == 3:
-    status_line("All 3 Supertrends bearish — strong downtrend, avoid new longs.", "strong_bearish")
-elif bears == 2:
-    status_line("2 of 3 Supertrends bearish — leaning down, caution on long entries.", "bearish")
-else:
-    status_line("Supertrends conflicted — mixed directions, wait for alignment.", "neutral")
-
-# ── CHART 1 ────────────────────────────────────────────────────
-
-fig1 = build_chart1(df)
-st.plotly_chart(fig1, use_container_width=True)
-st.caption(
-    "**Triple Supertrend Chart 1** — Each ST line changes colour with direction: "
-    "green = bullish (dynamic support below price), red = bearish (dynamic resistance above price). "
-    "No ghost lines. Green ▲ = any ST flipped bullish. Red ▼ = any ST flipped bearish.")
-
-st.divider()
-
-# ── CHART 2 ────────────────────────────────────────────────────
-
-fig2 = build_chart2(df)
-st.plotly_chart(fig2, use_container_width=True)
-st.caption(
-    "**Triple Supertrend Chart 2 (Nordman-style)** — "
-    "Candle colour reflects ST alignment: bright green = 3/3 bull, light green = 2/3, light red = 1/3, bright red = 0/3. "
-    "Green background zone = all 3 bullish. Red background zone = all 3 bearish. "
-    "EMA 200 (yellow dotted). Large ▲/▼ arrows fire only when all 3 STs first align in the same direction.")
-
+render_supertrend(df, "asx", "AUD")
 st.divider()
 
 # ── RSI + Stoch ────────────────────────────────────────────────
@@ -1123,7 +794,7 @@ with row1_l:
     k_f   = latest["StochRSI_k"]
     if pd.notna(rsi_f) and pd.notna(k_f):
         if rsi_f < 30 and k_f < 20:
-            status_line(f"RSI {rsi_f:.1f} & Stoch K {k_f:.1f} — both deeply oversold, high probability bounce.", "strong_bullish")
+            status_line(f"RSI {rsi_f:.1f} & Stoch K {k_f:.1f} — both deeply oversold, oversold; a bounce is not confirmed.", "strong_bullish")
         elif rsi_f < 40:
             status_line(f"RSI {rsi_f:.1f} — oversold, watching for Stoch K to confirm reversal.", "bullish")
         elif rsi_f > 70 and k_f > 80:
@@ -1149,8 +820,8 @@ with row1_l:
     fig_rsi.add_hline(y=80, line_dash="dash", line_color="red",  row=2, col=1)
     fig_rsi.add_hline(y=20, line_dash="dash", line_color="lime", row=2, col=1)
     fig_rsi.update_layout(height=500, margin=dict(t=30, b=10))
-    st.plotly_chart(fig_rsi, use_container_width=True)
-    st.caption("RSI <30 = strongly oversold; >70 = overbought. Stoch K <20 = reversal up likely.")
+    st.plotly_chart(fig_rsi, width="stretch")
+    st.caption("RSI <30 = strongly oversold; >70 = overbought. Stoch K <20 = oversold reading.")
 
 with row1_r:
     st.markdown(
@@ -1200,7 +871,7 @@ with row1_r:
         fig_bb.add_hline(y=r, line_dash="dot", line_color="tomato", opacity=0.5,
                          annotation_text=f"R ${r:,.4f}", annotation_position="top left")
     fig_bb.update_layout(height=500, margin=dict(t=30, b=10), xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig_bb, use_container_width=True)
+    st.plotly_chart(fig_bb, width="stretch")
     st.caption("BB below lower = oversold; above upper = overbought. EMA50 (green) / EMA200 (red).")
 
 st.divider()
@@ -1220,9 +891,9 @@ with row2_l:
     mv = latest["MACD"]
     ms = latest["MACD_signal"]
     if pd.notna(mh) and pd.notna(mv) and pd.notna(ms):
-        if mv > ms and mh > 0:
+        if mv > ms and mh >= df["MACD_hist"].iloc[-2]:
             status_line(f"MACD above signal, histogram positive — bullish momentum confirmed.", "bullish")
-        elif mv > ms and mh < 0:
+        elif mv > ms and mh < df["MACD_hist"].iloc[-2]:
             status_line(f"MACD above signal but histogram shrinking — momentum weakening.", "caution")
         elif mv < ms and mh < 0:
             status_line(f"MACD below signal, histogram negative — bearish momentum.", "bearish")
@@ -1241,7 +912,7 @@ with row2_l:
     fig_macd.add_trace(go.Bar(x=df["time"], y=df["MACD_hist"],
         name="Histogram", marker_color=colors_macd), row=2, col=1)
     fig_macd.update_layout(height=500, margin=dict(t=30, b=10))
-    st.plotly_chart(fig_macd, use_container_width=True)
+    st.plotly_chart(fig_macd, width="stretch")
     st.caption("MACD above signal = bullish. Histogram turning green = momentum shift.")
 
 with row2_r:
@@ -1274,7 +945,7 @@ with row2_r:
     fig_adx.add_hline(y=25, line_dash="dash", line_color="white",
                       annotation_text="Trend threshold")
     fig_adx.update_layout(height=500, margin=dict(t=30, b=10))
-    st.plotly_chart(fig_adx, use_container_width=True)
+    st.plotly_chart(fig_adx, width="stretch")
     st.caption("ADX >25 = trending market. <20 = choppy, avoid breakout entries.")
 
 st.divider()
@@ -1304,7 +975,7 @@ with row3_l:
     fig_cci.add_hrect(y0=-300, y1=-100, fillcolor="green", opacity=0.05)
     fig_cci.add_hrect(y0=100,  y1=300,  fillcolor="red",   opacity=0.05)
     fig_cci.update_layout(height=400, margin=dict(t=30, b=10))
-    st.plotly_chart(fig_cci, use_container_width=True)
+    st.plotly_chart(fig_cci, width="stretch")
     st.caption("CCI below -100 = oversold. Above +100 = overbought.")
 
 with row3_r:
@@ -1326,7 +997,7 @@ with row3_r:
     fig_wr.add_hrect(y0=-100, y1=-80, fillcolor="green", opacity=0.05)
     fig_wr.add_hrect(y0=-20,  y1=0,   fillcolor="red",   opacity=0.05)
     fig_wr.update_layout(height=400, margin=dict(t=30, b=10))
-    st.plotly_chart(fig_wr, use_container_width=True)
+    st.plotly_chart(fig_wr, width="stretch")
     st.caption("Williams %R below -80 = oversold. Above -20 = overbought.")
 
 st.divider()
@@ -1358,7 +1029,7 @@ with row4_l:
     fig_roc.add_hline(y=-5, line_dash="dash", line_color="red")
     fig_roc.add_hline(y=0,  line_color="gray")
     fig_roc.update_layout(height=400, margin=dict(t=30, b=10))
-    st.plotly_chart(fig_roc, use_container_width=True)
+    st.plotly_chart(fig_roc, width="stretch")
     st.caption("ROC above +5% = strong positive momentum. Below -5% = strong negative momentum.")
 
 with row4_r:
@@ -1378,17 +1049,17 @@ with row4_r:
     fig_atr.add_trace(go.Scatter(x=df["time"], y=df["ATR"],
         name="ATR", line=dict(color="#C084FC", width=2)))
     fig_atr.update_layout(height=400, margin=dict(t=30, b=10))
-    st.plotly_chart(fig_atr, use_container_width=True)
+    st.plotly_chart(fig_atr, width="stretch")
     st.caption("ATR rising = increasing volatility. Size stops at 1.5-2x ATR.")
 
 st.divider()
 
-# ── TTM Squeeze + Volume ───────────────────────────────────────
+# ── Squeeze (approximation) + Volume ───────────────────────────────────────
 
 row5_l, row5_r = st.columns(2)
 
 with row5_l:
-    st.markdown(f"<h4>TTM Squeeze &nbsp;{val_span('Squeeze: ' + sq_val, sq_color)}</h4>",
+    st.markdown(f"<h4>Squeeze (approximation) &nbsp;{val_span('Squeeze: ' + sq_val, sq_color)}</h4>",
                 unsafe_allow_html=True)
     sq_f = latest["squeeze"]
     sh_f = latest["squeeze_hist"]
@@ -1397,9 +1068,9 @@ with row5_l:
             status_line("Squeeze ON — coiling with bullish momentum building. Watch for release.", "caution")
         elif sq_f and sh_f < 0:
             status_line("Squeeze ON — coiling but bearish momentum. Release likely downside.", "caution")
-        elif not sq_f and sh_f > 0:
+        elif latest["squeeze_fired"] and sh_f > 0:
             status_line("Squeeze FIRED — momentum released to the upside. Breakout signal.", "strong_bullish")
-        elif not sq_f and sh_f < 0:
+        elif latest["squeeze_fired"] and sh_f < 0:
             status_line("Squeeze FIRED — momentum released to the downside. Breakdown signal.", "strong_bearish")
     squeeze_colors = ["green" if v >= 0 else "red" for v in df["squeeze_hist"].fillna(0)]
     dot_colors     = ["black" if s else "lime" for s in df["squeeze"].fillna(False)]
@@ -1410,8 +1081,8 @@ with row5_l:
         marker=dict(color=dot_colors, size=6, symbol="circle"),
         name="Squeeze (black=on, lime=off)"))
     fig_sq.update_layout(height=400, margin=dict(t=30, b=10))
-    st.plotly_chart(fig_sq, use_container_width=True)
-    st.caption("Black dots = coiling for breakout. Lime = released. Green bars = bullish breakout signal.")
+    st.plotly_chart(fig_sq, width="stretch")
+    st.caption("Approximation: Bollinger/Keltner compression plus smoothed momentum, not an exact TTM implementation. Off is not a new release.")
 
 with row5_r:
     st.markdown("<h4>Volume</h4>", unsafe_allow_html=True)
@@ -1437,7 +1108,7 @@ with row5_r:
         fig_vol.add_trace(go.Scatter(x=df["time"], y=avg_vol,
             name="20-period Avg", line=dict(color="#F59E0B", width=1.5, dash="dot")))
         fig_vol.update_layout(height=400, margin=dict(t=30, b=10))
-        st.plotly_chart(fig_vol, use_container_width=True)
+        st.plotly_chart(fig_vol, width="stretch")
         st.caption("Green = up day; red = down day. Volume above average on breakouts = confirmation.")
     else:
         st.info("Volume data not available.")
